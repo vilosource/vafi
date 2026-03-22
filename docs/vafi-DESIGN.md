@@ -93,9 +93,10 @@ pipelines, and automated code review systems all follow the same loop.
 vtf is the first work source, but vafi is designed to be work-source
 agnostic.
 
-vafi **consumes** vf-agents building blocks (image hierarchy, credential
-staging patterns, adapter knowledge) but is independently developed,
-deployed, and versioned.
+vafi is a separate project built from scratch. vf-agents is a running
+system that demonstrates how Claude Code CLI behaves in containers
+(session storage, auth resolution, output format), but vafi has no
+code or image dependency on it.
 
 ---
 
@@ -288,10 +289,10 @@ addresses:
 id: vtf-executor
 description: "Executes vtf tasks using Claude Code"
 
-# Existing vf-agents concepts (composed, not replaced)
+# Standard container execution concepts
 runtime: claude-code
 provider: claude-anthropic               # which provider config to use
-image: vtf-vff-agent:latest             # image override
+image: vafi-agent:latest             # image override
 
 # Behavioral identity (new)
 role: executor
@@ -340,7 +341,7 @@ description: "Reviews vtf task completions"
 
 runtime: claude-code
 provider: claude-anthropic
-image: vtf-vff-agent:latest
+image: vafi-agent:latest
 
 role: judge
 methodology: methodologies/judge.md
@@ -390,10 +391,9 @@ Claude Code loads instructions from multiple levels:
 
 All levels stack. They do not collide.
 
-**Key enabler: `$HOME != workdir` in vf-agents.** The existing vf-agents
-container layout separates the user home (`/home/node`) from the working
-directory (`/workdir`). This separation, originally designed for clean
-credential isolation, gives us three independent namespaces that map
+**Key enabler: `$HOME != workdir` in the container layout.** vafi
+containers separate the user home directory from the working directory.
+This separation gives us three independent namespaces that map
 directly to our three instruction layers — each with a different
 lifecycle and a different owner:
 
@@ -523,9 +523,9 @@ required.
 +----------------------------------------------------------+
 ```
 
-**Layer 1 (Shared Infrastructure)** is the existing vf-agents
-foundation. Runtime adapters, credential staging, image hierarchy, and
-volume conventions are reused unchanged.
+**Layer 1 (Shared Infrastructure)** is vafi's own foundation layer.
+Credential staging, image hierarchy, and volume conventions are built
+for vafi's autonomous fleet use case.
 
 **Layer 2 (Harness)** is the AI CLI tool. It receives methodology via
 user-level instructions, project context via repo-level instructions,
@@ -745,16 +745,16 @@ It runs the tests and uses the exit codes.
 
 ### Image strategy
 
-One new image layer on top of the existing hierarchy:
+vafi builds its own image hierarchy:
 
 ```
 node:20-bookworm-slim
-  -> vf-agents-base           (git, curl, ssh, jq)
-       -> vf-agents-claude    (+ Claude Code CLI)
-            -> vtf-vff-agent  (+ Python controller, methodologies, templates)
+  -> vafi-base               (git, curl, ssh, jq, python)
+       -> vafi-claude         (+ Claude Code CLI)
+            -> vafi-agent     (+ Python controller, methodologies, templates)
 ```
 
-The `vtf-vff-agent` image contains:
+The `vafi-agent` image contains:
 
 ```
 /opt/vf-agent/
@@ -791,7 +791,7 @@ methodology file, and loads the matching prompt templates.
 ```yaml
 # docker-compose.yml
 executor-1:
-  image: vtf-vff-agent:latest
+  image: vafi-agent:latest
   environment:
     VF_AGENT_ROLE: executor
   volumes:
@@ -805,7 +805,7 @@ Edit files on the host, restart the container.
 
 ```
 +------------------------------------------------------+
-|  vtf-vff-agent container                              |
+|  vafi-agent container                              |
 |                                                       |
 |  Entrypoint: python -m controller                     |
 |                                                       |
@@ -881,8 +881,8 @@ orchestrator event.
 
 ### Session resumption for rework
 
-**Spike 1 findings (2026-03-22):** Investigation of vf-agents session
-handling confirms that Claude Code stores session files in `~/.claude/`
+**Spike 1 findings (2026-03-22):** Investigation of Claude Code CLI
+behavior confirms that it stores session files in `~/.claude/`
 inside the container, NOT in the working directory. These files do not
 survive container restarts. Workdir contents (code changes, commits) on
 shared volumes DO survive. This means:
@@ -907,9 +907,10 @@ the exception.
 5. If no (common case): fresh session with full spec + judge feedback as context
 
 **Future optimization:** Mount a per-task Claude config directory on the
-shared session volume (e.g., `/sessions/<ms>/<task>/.claude/`) and set
-`CLAUDE_CONFIG_DIR` per harness invocation. This would make session
-resume work across pods. Not required for MVP — the fallback path is
+shared session volume (e.g., `/sessions/<ms>/<task>/.claude/`) to enable
+cross-pod session resume. Claude Code currently has no env var to
+redirect its config directory, so this would require a `$HOME` override
+or symlink per invocation. Not required for MVP — the fallback path is
 proven effective from vtaskforge Phase 9 rework cycles.
 
 ### The contract: orchestrator <-> controller
@@ -980,7 +981,7 @@ spec:
     spec:
       containers:
         - name: agent
-          image: vtf-vff-agent:latest
+          image: vafi-agent:latest
           env:
             - name: VF_AGENT_ID
               valueFrom:
@@ -1064,33 +1065,31 @@ spec:
 
 ### Relationship to vf-agents
 
-vafi is a separate project, not a mode of vf-agents. They serve different
-users but share infrastructure:
+vafi is a separate project built from scratch with no code or image
+dependency on vf-agents. They serve different users:
 
 | System | User | Purpose |
 |--------|------|---------|
 | `vfa` (vf-agents) | Human developer | Run AI tools in containers interactively |
 | `vafi` | Automated systems (vtf) | Autonomous agent fleet execution |
 
-**What vafi reuses from vf-agents:**
+**vf-agents as reference material:** vf-agents is a running system
+that exercises Claude Code CLI in containers. We referenced it to
+observe CLI behavior (session file storage, auth resolution paths,
+output JSON format, `--resume` mechanics) without needing throwaway
+test containers. The observations are about **Claude Code CLI**, not
+about vf-agents design choices.
 
-| Building block | How vafi uses it |
-|----------------|-----------------|
-| Image hierarchy (base, toolset, runtime layers) | vafi images build on top of `vf-agents-claude` |
-| Credential staging patterns (tmpfs + copy) | Same auth mechanism for harness inside containers |
-| Adapter knowledge (CLI flags, output format, session resume) | Controller invokes harness using the same command patterns |
-| Volume conventions | Consistent mount patterns across both systems |
-
-**What vafi builds independently:**
+**What vafi builds:**
 
 | Component | Purpose |
 |-----------|---------|
-| Controller (Python) | Autonomous work loop inside containers |
+| Image hierarchy (`vafi-base`, `vafi-claude`, `vafi-agent`) | Container images for autonomous agent execution |
+| Controller (Python asyncio) | Autonomous work loop inside pods |
+| Credential staging | Auth mechanism for harness inside containers |
 | Agent configs | Declarative agent definitions (identity, role, work source, gates) |
-| vafi orchestrator | Container lifecycle, fleet management |
 | Work source abstraction | Pluggable task sources (vtf first) |
 | Gate system | Declarative verification after harness completion |
-| Worker images | `vtf-vff-agent` and future specialized images |
 
 ---
 
@@ -1205,8 +1204,7 @@ its full execution context.
   + `git fetch`) for speed
 
 **Git credentials: SSH keys mounted into container.**
-- Orchestrator mounts keys at `/home/node/.ssh/` (same pattern as
-  current vf-agents)
+- Orchestrator mounts keys at `/home/node/.ssh/`
 - Future: vtf-issued deploy tokens per task (GitLab CI_JOB_TOKEN pattern)
 
 **Branch selection:** From vafi project config `default_branch`. Future:
@@ -1243,11 +1241,11 @@ agent pools can use different images:
 ```yaml
 # Python project agents
 executor-python:
-  image: vtf-vff-agent-python:latest
+  image: vafi-agent-python:latest
 
 # Node project agents
 executor-node:
-  image: vtf-vff-agent-node:latest
+  image: vafi-agent-node:latest
 ```
 
 Tag-based routing (already in vtf) directs tasks to the right pool.
@@ -1277,9 +1275,6 @@ and vtaskforge repos.
   GateResult, ExecutionResult
 
 See the contract document for full details.
-
----
-
 
 ---
 
@@ -1322,22 +1317,22 @@ Implications:
 - The fallback is the **normal path** for fleet operations — pods
   restart routinely
 - Future optimization: mount per-task Claude config on shared volume
-  via `CLAUDE_CONFIG_DIR` to enable cross-pod session resume
+  to enable cross-pod session resume (requires investigating whether
+  Claude Code supports a config directory override — as of Spike 2,
+  no such env var exists; this may need a symlink or HOME override)
 
 **Spike 2: Dynamic workdir auth resolution — RESOLVED (2026-03-22)**
 
-Investigation of vf-agents credential handling confirms:
+Investigation of Claude Code CLI behavior confirms:
 
 1. Claude Code CLI resolves credentials from `$HOME/.claude/`
-   (hardcoded, no env var override like `CLAUDE_CONFIG_DIR`)
+   (hardcoded, no env var override)
 2. Changing cwd between invocations has zero effect on auth
 3. No cwd-relative config lookups exist — all credential paths
    are anchored to `$HOME`
 
-The vf-agents container layout (`$HOME=/home/node`, workdir at
-`/workdir`) already proves this separation. Credentials are staged
-from the host into `$HOME/.claude/` at container start via pre-run
-hooks. The workdir is a completely independent mount.
+This was validated by observing Claude Code running in containers
+where `$HOME` and the working directory are separate paths.
 
 **Implication for vafi:** The controller can invoke the harness with
 different cwds per task (`/sessions/<ms>/<task>/`) and auth works
@@ -1351,7 +1346,7 @@ Once dependencies and spikes are resolved:
 1. **K8s cluster** — provision and configure
 2. **vtf interface changes** — GAP-1 through GAP-5
 3. **Controller** — Python asyncio controller (the core of vafi)
-4. **Agent image** — `vtf-vff-agent` with controller, methodologies, templates
+4. **Agent image** — `vafi-agent` with controller, methodologies, templates
 5. **Agent manifests** — k8s Deployments for executor, judge, supervisor pools
 6. **First project environment** — vtf dogfood as a k8s namespace
 7. **End-to-end test** — executor picks up a task, clones, executes, gates, reports
