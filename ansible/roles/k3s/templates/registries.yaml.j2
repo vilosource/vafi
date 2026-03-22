@@ -1,0 +1,10 @@
+# k3s private registry configuration
+# Managed by Ansible — do not edit manually
+
+mirrors:
+  "{{ ansible_host }}:30500":
+    endpoint:
+      - "http://{{ ansible_host }}:30500"
+  "registry.vafi-system.svc.cluster.local:5000":
+    endpoint:
+      - "http://registry.vafi-system.svc.cluster.local:5000"

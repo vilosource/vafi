@@ -24,6 +24,13 @@
     mode: "0644"
   notify: restart k3s
 
+- name: Deploy private registry configuration
+  ansible.builtin.template:
+    src: registries.yaml.j2
+    dest: /etc/rancher/k3s/registries.yaml
+    mode: "0644"
+  notify: restart k3s
+
 - name: Ensure k3s is running and enabled
   ansible.builtin.systemd:
     name: k3s
