@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from .config import AgentConfig
 from .gates import GateRunner
+from .heartbeat import heartbeat_loop
 from .invoker import HarnessInvoker
 from .prompt import load_template, render_prompt
 from .types import ExecutionResult
@@ -144,14 +145,16 @@ class Controller:
     async def execute(self, task) -> ExecutionResult:
         """Execute a task using the harness invoker and run verification gates.
 
-        Implementation follows the M2.6 specification:
-        1. Invoke harness (already done in M2.5)
-        2. If harness succeeded (is_error=false, exit code 0):
+        Implementation follows the M2.6 specification with M2.7 heartbeat:
+        1. Start heartbeat coroutine concurrently with execution
+        2. Invoke harness (already done in M2.5)
+        3. If harness succeeded (is_error=false, exit code 0):
            a. Run gates
            b. All gates pass → success=True
            c. Any gate fails → success=False
-        3. If harness failed:
+        4. If harness failed:
            a. Return failure without running gates
+        5. Cancel heartbeat task and await clean shutdown
 
         Args:
             task: TaskInfo object with task details
@@ -159,6 +162,12 @@ class Controller:
         Returns:
             ExecutionResult with success status, execution details, and gate results
         """
+        # Start heartbeat coroutine before beginning execution
+        heartbeat_task = asyncio.create_task(
+            heartbeat_loop(self.work_source, task.id, self.config.heartbeat_interval)
+        )
+        logger.debug(f"Started heartbeat task for task {task.id}")
+
         try:
             # Create workdir based on task ID
             workdir = Path(self.config.sessions_dir) / f"task-{task.id}"
@@ -225,6 +234,18 @@ class Controller:
                 num_turns=0,
                 gate_results=[]
             )
+
+        finally:
+            # Always cancel heartbeat task and wait for clean shutdown
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                # Expected when we cancelled the task
+                logger.debug(f"Heartbeat task cancelled cleanly for task {task.id}")
+            except Exception as e:
+                # Unexpected error in heartbeat cleanup
+                logger.warning(f"Error during heartbeat cleanup for task {task.id}: {e}")
 
     def _log_task_details(self, task) -> None:
         """Log detailed information about a claimed task."""
