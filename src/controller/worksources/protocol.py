@@ -47,13 +47,12 @@ class WorkSource(Protocol):
         """
         ...
 
-    async def claim(self, task_id: str, agent_id: str, tags: list[str]) -> TaskInfo:
+    async def claim(self, task_id: str, agent_id: str) -> TaskInfo:
         """Claim a task for execution.
 
         Args:
             task_id: Task ID to claim
             agent_id: ID of the claiming agent
-            tags: Agent tags for validation
 
         Returns:
             Updated task information
@@ -123,5 +122,34 @@ class WorkSource(Protocol):
 
         Returns:
             Number of times the task has been rejected for changes
+        """
+        ...
+
+    async def submit(self, task_id: str) -> None:
+        """Submit a task from draft to todo status (supervisor operation).
+
+        Args:
+            task_id: Task ID to submit
+        """
+        ...
+
+    async def list_submittable(self) -> list[TaskInfo]:
+        """List tasks that can be submitted (supervisor operation).
+
+        Returns tasks in draft status where all dependencies are completed.
+
+        Returns:
+            List of submittable tasks
+        """
+        ...
+
+    async def submit_review(self, task_id: str, decision: str, reason: str, reviewer_id: str) -> None:
+        """Submit a review for a completed task (judge operation).
+
+        Args:
+            task_id: Task ID being reviewed
+            decision: Review decision ("approved" or "changes_requested")
+            reason: Review reasoning/feedback
+            reviewer_id: ID of the reviewer
         """
         ...

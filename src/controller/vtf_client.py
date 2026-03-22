@@ -311,3 +311,14 @@ class VtfClient:
         self._handle_error(response)
 
         return response.json()
+
+    async def submit_task(self, task_id: str) -> None:
+        """Submit a task from draft to todo status.
+
+        Args:
+            task_id: Task ID to submit
+        """
+        url = f"{self.base_url}/v1/tasks/{task_id}/submit/"
+
+        response = await self._client.post(url, headers=self._headers())
+        self._handle_error(response)

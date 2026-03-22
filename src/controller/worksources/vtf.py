@@ -20,13 +20,15 @@ from ..vtf_client import VtfClient
 class VtfWorkSource:
     """WorkSource implementation backed by the vtf REST API."""
 
-    def __init__(self, client: VtfClient):
+    def __init__(self, client: VtfClient, tags: list[str] | None = None):
         """Initialize with a VtfClient instance.
 
         Args:
             client: VtfClient for API communication
+            tags: Default agent tags for operations (can be overridden)
         """
-        self.client = client
+        self._client = client
+        self._default_tags = tags or []
 
     async def register(self, name: str, tags: list[str]) -> AgentInfo:
         """Register an agent with vtf.
@@ -41,7 +43,7 @@ class VtfWorkSource:
         Returns:
             Agent information including ID and auth token
         """
-        agent_data = await self.client.register_agent(name, tags)
+        agent_data = await self._client.register_agent(name, tags)
         return AgentInfo(
             id=agent_data["id"],
             token=agent_data["token"]
@@ -61,7 +63,7 @@ class VtfWorkSource:
             Next task to execute, or None if no work available
         """
         # Priority 1: Check for rework assigned to this agent
-        rework_tasks = await self.client.list_tasks(
+        rework_tasks = await self._client.list_tasks(
             status="changes_requested",
             assigned_to=agent_id,
             expand=["reviews"]
@@ -71,25 +73,25 @@ class VtfWorkSource:
             return self._task_data_to_info(task_data)
 
         # Priority 2: Check for new claimable work
-        claimable_tasks = await self.client.list_claimable(tags, agent_id)
+        claimable_tasks = await self._client.list_claimable(tags, agent_id)
         if claimable_tasks:
             task_data = claimable_tasks[0]  # Take the first claimable task
             return self._task_data_to_info(task_data)
 
         return None
 
-    async def claim(self, task_id: str, agent_id: str, tags: list[str]) -> TaskInfo:
+    async def claim(self, task_id: str, agent_id: str) -> TaskInfo:
         """Claim a task for execution.
 
         Args:
             task_id: Task ID to claim
             agent_id: ID of the claiming agent
-            tags: Agent tags for validation
 
         Returns:
             Updated task information
         """
-        task_data = await self.client.claim_task(task_id, agent_id, tags)
+        # Use default tags from constructor for validation
+        task_data = await self._client.claim_task(task_id, agent_id, self._default_tags)
         return self._task_data_to_info(task_data)
 
     async def heartbeat(self, task_id: str) -> None:
@@ -98,7 +100,7 @@ class VtfWorkSource:
         Args:
             task_id: Task ID being executed
         """
-        await self.client.heartbeat(task_id)
+        await self._client.heartbeat(task_id)
 
     async def complete(self, task_id: str, result: ExecutionResult) -> None:
         """Mark a task as completed with execution results.
@@ -111,7 +113,7 @@ class VtfWorkSource:
             result: Execution results
         """
         # Store completion report as a note
-        await self.client.add_note(
+        await self._client.add_note(
             task_id=task_id,
             text=result.completion_report,
             actor_id="controller"  # TODO: Use actual agent ID
@@ -119,7 +121,7 @@ class VtfWorkSource:
 
         # Store session ID for rework resumption (if available)
         if result.session_id:
-            await self.client.add_note(
+            await self._client.add_note(
                 task_id=task_id,
                 text=f"vafi:session_id={result.session_id}",
                 actor_id="controller"
@@ -132,14 +134,14 @@ class VtfWorkSource:
             f"num_turns: {result.num_turns}\n"
             f"gates: {len(result.gate_results)} executed"
         )
-        await self.client.add_note(
+        await self._client.add_note(
             task_id=task_id,
             text=metadata_text,
             actor_id="controller"
         )
 
         # Complete the task
-        await self.client.complete_task(task_id)
+        await self._client.complete_task(task_id)
 
     async def fail(self, task_id: str, reason: str) -> None:
         """Mark a task as failed.
@@ -151,14 +153,14 @@ class VtfWorkSource:
             reason: Failure reason for human triage
         """
         # Store failure reason as a note
-        await self.client.add_note(
+        await self._client.add_note(
             task_id=task_id,
             text=f"Task failed: {reason}",
             actor_id="controller"
         )
 
         # Fail the task
-        await self.client.fail_task(task_id)
+        await self._client.fail_task(task_id)
 
     async def get_repo_info(self, project_id: str) -> RepoInfo:
         """Get repository information for a project.
@@ -169,7 +171,7 @@ class VtfWorkSource:
         Returns:
             Repository URL and default branch
         """
-        project_data = await self.client.get_project(project_id)
+        project_data = await self._client.get_project(project_id)
         return RepoInfo(
             url=project_data["repo_url"],
             branch=project_data["default_branch"]
@@ -188,7 +190,7 @@ class VtfWorkSource:
             Rework context including judge feedback and attempt count
         """
         # Get task with reviews to find judge feedback
-        task_data = await self.client.get_task(task_id, expand=["reviews"])
+        task_data = await self._client.get_task(task_id, expand=["reviews"])
 
         # Find the latest changes_requested review
         judge_feedback = ""
@@ -201,7 +203,7 @@ class VtfWorkSource:
         # Try to find session ID from previous execution
         session_id = None
         try:
-            notes = await self.client.list_notes(task_id)
+            notes = await self._client.list_notes(task_id)
             for note in notes:
                 text = note.get("text", "")
                 if text.startswith("vafi:session_id="):
@@ -229,7 +231,7 @@ class VtfWorkSource:
         Returns:
             Number of changes_requested reviews
         """
-        task_data = await self.client.get_task(task_id, expand=["reviews"])
+        task_data = await self._client.get_task(task_id, expand=["reviews"])
         reviews = task_data.get("reviews", [])
 
         count = 0
@@ -238,6 +240,68 @@ class VtfWorkSource:
                 count += 1
 
         return count
+
+    async def submit(self, task_id: str) -> None:
+        """Submit a task from draft to todo status (supervisor operation).
+
+        Args:
+            task_id: Task ID to submit
+        """
+        await self._client.submit_task(task_id)
+
+    async def list_submittable(self) -> list[TaskInfo]:
+        """List tasks that can be submitted (supervisor operation).
+
+        Returns tasks in draft status where all dependencies are completed.
+
+        Returns:
+            List of submittable tasks
+        """
+        # Get all draft tasks with their dependencies
+        draft_tasks = await self._client.list_tasks(
+            status="draft",
+            expand=["links"]
+        )
+
+        submittable = []
+        for task_data in draft_tasks:
+            # Check if all dependencies are completed
+            dependencies = task_data.get("depends_on", [])
+            if self._are_dependencies_completed(task_data):
+                submittable.append(self._task_data_to_info(task_data))
+
+        return submittable
+
+    async def submit_review(self, task_id: str, decision: str, reason: str, reviewer_id: str) -> None:
+        """Submit a review for a completed task (judge operation).
+
+        Args:
+            task_id: Task ID being reviewed
+            decision: Review decision ("approved" or "changes_requested")
+            reason: Review reasoning/feedback
+            reviewer_id: ID of the reviewer
+        """
+        await self._client.submit_review(task_id, decision, reason, reviewer_id)
+
+    def _are_dependencies_completed(self, task_data: dict[str, Any]) -> bool:
+        """Check if all task dependencies are completed.
+
+        Args:
+            task_data: Task data with expanded links
+
+        Returns:
+            True if all dependencies are done, False otherwise
+        """
+        dependencies = task_data.get("depends_on", [])
+        if not dependencies:
+            return True
+
+        # Check each dependency status
+        for dep_task_data in dependencies:
+            if dep_task_data.get("status") != "done":
+                return False
+
+        return True
 
     def _task_data_to_info(self, task_data: dict[str, Any]) -> TaskInfo:
         """Convert vtf task data to TaskInfo.

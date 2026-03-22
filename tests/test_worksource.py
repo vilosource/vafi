@@ -23,6 +23,9 @@ class TestWorkSourceProtocol:
             'heartbeat',
             'complete',
             'fail',
+            'submit',
+            'list_submittable',
+            'submit_review',
             'get_repo_info',
             'get_rework_context',
             'count_rework_attempts'
@@ -155,9 +158,9 @@ class TestVtfWorkSource:
         }
         self.mock_client.claim_task.return_value = task_data
 
-        result = await self.work_source.claim("task_123", "agent_123", ["executor"])
+        result = await self.work_source.claim("task_123", "agent_123")
 
-        self.mock_client.claim_task.assert_called_once_with("task_123", "agent_123", ["executor"])
+        self.mock_client.claim_task.assert_called_once_with("task_123", "agent_123", [])
         assert isinstance(result, TaskInfo)
         assert result.id == "task_123"
 
@@ -320,3 +323,103 @@ class TestVtfWorkSource:
         result = await self.work_source.count_rework_attempts("task_123")
 
         assert result == 2  # Two changes_requested reviews
+
+    async def test_submit(self):
+        """Test task submission."""
+        await self.work_source.submit("task_123")
+
+        self.mock_client.submit_task.assert_called_once_with("task_123")
+
+    async def test_list_submittable_with_dependencies(self):
+        """Test listing submittable tasks when dependencies are met."""
+        draft_task_with_deps_completed = {
+            "id": "task_draft",
+            "title": "Draft Task",
+            "spec": "draft spec",
+            "project": "proj_123",
+            "test_command": {},
+            "needs_review_on_completion": False,
+            "assigned_to": None,
+            "depends_on": [
+                {
+                    "id": "dep_task_1",
+                    "status": "done"
+                },
+                {
+                    "id": "dep_task_2",
+                    "status": "done"
+                }
+            ]
+        }
+
+        draft_task_with_pending_deps = {
+            "id": "task_draft2",
+            "title": "Draft Task 2",
+            "spec": "draft spec 2",
+            "project": "proj_456",
+            "test_command": {},
+            "needs_review_on_completion": False,
+            "assigned_to": None,
+            "depends_on": [
+                {
+                    "id": "dep_task_3",
+                    "status": "done"
+                },
+                {
+                    "id": "dep_task_4",
+                    "status": "in_progress"  # Not done
+                }
+            ]
+        }
+
+        self.mock_client.list_tasks.return_value = [
+            draft_task_with_deps_completed,
+            draft_task_with_pending_deps
+        ]
+
+        result = await self.work_source.list_submittable()
+
+        self.mock_client.list_tasks.assert_called_once_with(
+            status="draft",
+            expand=["links"]
+        )
+
+        # Only the task with completed dependencies should be returned
+        assert len(result) == 1
+        assert result[0].id == "task_draft"
+
+    async def test_list_submittable_no_dependencies(self):
+        """Test listing submittable tasks with no dependencies."""
+        draft_task_no_deps = {
+            "id": "task_draft_nodeps",
+            "title": "Draft Task No Deps",
+            "spec": "draft spec",
+            "project": "proj_789",
+            "test_command": {},
+            "needs_review_on_completion": False,
+            "assigned_to": None,
+            "depends_on": []
+        }
+
+        self.mock_client.list_tasks.return_value = [draft_task_no_deps]
+
+        result = await self.work_source.list_submittable()
+
+        assert len(result) == 1
+        assert result[0].id == "task_draft_nodeps"
+
+    async def test_submit_review(self):
+        """Test submitting a review."""
+        await self.work_source.submit_review(
+            "task_123",
+            "changes_requested",
+            "Please add more tests",
+            "judge_agent_456"
+        )
+
+        self.mock_client.submit_review.assert_called_once_with(
+            "task_123",
+            "changes_requested",
+            "Please add more tests",
+            "judge_agent_456"
+        )
