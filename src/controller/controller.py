@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import AgentConfig
+from .gates import GateRunner
 from .invoker import HarnessInvoker
 from .prompt import load_template, render_prompt
 from .types import ExecutionResult
@@ -119,8 +120,18 @@ class Controller:
                 await self.work_source.complete(task.id, result)
                 logger.info(f"Completed task {task.id}")
             else:
-                await self.work_source.fail(task.id, result.completion_report)
-                logger.info(f"Failed task {task.id}: {result.completion_report}")
+                # Prepare failure reason with gate output if gates failed
+                failure_reason = result.completion_report
+                if result.gate_results:
+                    failed_gates = [g for g in result.gate_results if not g.passed]
+                    if failed_gates:
+                        gate_output = "\n\nGate failures:\n"
+                        for gate in failed_gates:
+                            gate_output += f"Gate '{gate.name}' failed (exit_code={gate.exit_code}):\n{gate.stdout}\n"
+                        failure_reason += gate_output
+
+                await self.work_source.fail(task.id, failure_reason)
+                logger.info(f"Failed task {task.id}: {failure_reason}")
 
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
@@ -131,15 +142,22 @@ class Controller:
                 logger.error(f"Failed to fail task {task.id}", exc_info=True)
 
     async def execute(self, task) -> ExecutionResult:
-        """Execute a task using the harness invoker.
+        """Execute a task using the harness invoker and run verification gates.
 
-        Creates a workdir, gets repo info, builds prompt, and invokes harness.
+        Implementation follows the M2.6 specification:
+        1. Invoke harness (already done in M2.5)
+        2. If harness succeeded (is_error=false, exit code 0):
+           a. Run gates
+           b. All gates pass → success=True
+           c. Any gate fails → success=False
+        3. If harness failed:
+           a. Return failure without running gates
 
         Args:
             task: TaskInfo object with task details
 
         Returns:
-            ExecutionResult with success status and execution details
+            ExecutionResult with success status, execution details, and gate results
         """
         try:
             # Create workdir based on task ID
@@ -161,7 +179,41 @@ class Controller:
             # Invoke harness
             result = await self._invoker.invoke(task, repo_info, workdir, prompt)
 
-            return result
+            # If harness failed, return without running gates
+            if not result.success:
+                logger.info(f"Harness failed for task {task.id}, skipping gates")
+                return result
+
+            # Harness succeeded - run gates
+            logger.info(f"Harness succeeded for task {task.id}, running gates")
+            gate_runner = GateRunner.from_task_command(task.test_command)
+            gate_results = await gate_runner.run_gates(workdir, task)
+
+            # Determine overall success based on gate results
+            # All required gates must pass for task success
+            all_required_gates_passed = True
+            for gate_result in gate_results:
+                # For MVP, all gates created from test_command are required
+                if not gate_result.passed:
+                    all_required_gates_passed = False
+                    logger.warning(f"Gate '{gate_result.name}' failed for task {task.id}")
+
+            # Create final result with gate information
+            final_result = ExecutionResult(
+                success=all_required_gates_passed,
+                session_id=result.session_id,
+                completion_report=result.completion_report,
+                cost_usd=result.cost_usd,
+                num_turns=result.num_turns,
+                gate_results=gate_results
+            )
+
+            if final_result.success:
+                logger.info(f"Task {task.id} completed successfully with all gates passing")
+            else:
+                logger.info(f"Task {task.id} failed due to gate failures")
+
+            return final_result
 
         except Exception as e:
             logger.error(f"Task execution failed for {task.id}: {e}", exc_info=True)
