@@ -1,0 +1,1101 @@
+# vafi — Viloforge Agentic Fleet Infrastructure
+
+Status: Draft (2026-03-22)
+
+## Problem Statement
+
+vf-agents was built for a human standing at the controls. Every execution
+begins with a human typing `vfa run` or `vfa session start`, and every
+result ends with a human reading the output. The system is a cockpit —
+powerful, flexible, and entirely manual.
+
+This design made the right trade-offs for the first use case: a developer
+running AI agents against codebases, iterating on prompts and harness
+configurations, evaluating results interactively. The three-axis model
+(runtime, provider config, profile) gives that developer precise control
+over every dimension of an agent run.
+
+But vtaskforge has proven a second use case that vf-agents cannot serve:
+**autonomous agent fleets that pull work from a task system, execute it,
+verify it, and report results — without a human in the loop**.
+
+### What vtaskforge proved
+
+Over Phases 0-9 of vtaskforge development (49 tasks, 870+ tests), we ran
+an end-to-end simulation of autonomous agent execution inside a single
+Claude Code session. A human acted as supervisor, dispatching Sonnet
+executors and Opus judges as subagents, tracking state via the vtf API.
+
+The simulation validated the process:
+
+| Aspect | Evidence |
+|--------|----------|
+| YAML specs are sufficient for execution | Phase 9: all tasks completed from specs alone |
+| Reject/rework cycle works | Phase 9 task 9.2: judge rejected, executor reworked, approved on attempt 2 |
+| Parallel execution is safe | Phase 9 wave 4: four executors, zero merge conflicts |
+| Judges catch real issues | Stale comments, missing tests, N+1 query risks |
+| vtf state machine handles the full lifecycle | draft -> todo -> doing -> review -> done all work |
+
+But the simulation hit a wall. With one human driving one session, it
+cannot:
+
+- **Run unattended** — someone must be present to drive the loop
+- **Scale horizontally** — one session, one executor at a time
+- **Survive failures** — if the session dies, all in-flight work is lost
+- **Isolate executors** — subagents share the supervisor's filesystem
+- **Control resources** — no per-task token limits, timeouts, or cost caps
+- **Track execution** — no heartbeats, no audit trail during task work
+
+These are not vtaskforge limitations. They are vf-agents limitations.
+vtf has the API surface for all of this — claimable task queries, claim
+expiry, heartbeats, review submissions. What is missing is a way to run
+agents that use it.
+
+### Why the current architecture cannot serve this
+
+vf-agents has two execution modes, and neither fits:
+
+**`vfa run` (single-shot):** One container, one prompt, one result. The
+container starts, the harness runs, the container stops. There is no loop,
+no polling, no state between invocations. You could wrap it in a shell
+script that calls `vfa run` in a loop, but you would lose session
+resumption (each run starts fresh), pay the container startup cost per
+task, and have no heartbeats during execution.
+
+**`vfa session` (multi-turn):** A long-lived container where a human sends
+follow-up prompts via `vfa session send`. This is closer — the container
+stays alive and the harness supports session resumption. But the loop is
+still human-driven. There is no polling, no claiming, no automated
+verification. And session state is tracked on the host
+(`~/.vf-agents/active-session`), not inside the container, making it
+impossible for the agent to manage its own work autonomously.
+
+The gap is structural, not incremental. This is not a feature to add to
+vf-agents — it is a **separate system** with different users, different
+deployment model, and different lifecycle. vf-agents is a CLI for humans.
+What we need is infrastructure for autonomous agents.
+
+### Why a separate project: vafi
+
+vf-agents and vafi serve different users and have different concerns:
+
+| | vf-agents | vafi |
+|--|-----------|------|
+| **User** | Human developer | Automated system (vtf) |
+| **Lifecycle** | CLI invocation → result | Long-running deployed service |
+| **Deployment** | Installed on dev machine | Deployed as infrastructure |
+| **Core concern** | "Run this prompt in a container" | "Poll for work, execute, verify, report" |
+| **Analogy** | Docker CLI | GitLab Runner |
+
+The pattern — poll for work, claim it, execute it, verify it, report
+it — is universal. CI/CD runners, evaluation harnesses, batch processing
+pipelines, and automated code review systems all follow the same loop.
+vtf is the first work source, but vafi is designed to be work-source
+agnostic.
+
+vafi **consumes** vf-agents building blocks (image hierarchy, credential
+staging patterns, adapter knowledge) but is independently developed,
+deployed, and versioned.
+
+---
+
+## Current Architecture (Relevant Context)
+
+### The three-axis model
+
+vf-agents separates three concerns:
+
+```
+Provider Config  x  Run Profile  x  Prompt  =  Agent Run
+(who to talk to)   (how to run)    (what)      (execution)
+```
+
+This model is correct and does not change. vafi adds a fourth axis:
+**work source** — where tasks come from.
+
+### Instruction assembly
+
+Profiles point to an instruction directory containing `common.md` (shared)
+and optional runtime-specific files (e.g., `claude-code.md`). The
+assembler concatenates them and mounts the result as the runtime's
+instruction file (e.g., `/workdir/CLAUDE.md`).
+
+**vafi problem:** The instruction file is mounted at the workdir
+path, which is set once at container creation. In vafi, the workdir
+changes per task. The mounted instruction file does not follow.
+
+### Container lifecycle
+
+Both `vfa run` (ephemeral) and `vfa session` (persistent) manage container
+lifecycle from the host. The host decides when to start, exec into, and
+stop containers.
+
+**vafi problem:** In vafi, the container must be self-managing.
+It starts, runs a controller loop internally, and handles multiple tasks
+autonomously. The host starts the container but does not drive it.
+
+### Session management
+
+Session state (container ID, session ID mapping) lives on the host at
+`~/.vf-agents/active-session` and `~/.vf-agents/session-map.json`.
+
+**vafi problem:** Session state must be accessible from inside the
+container. The controller needs to resume sessions for rework, and session
+files must be on a shared volume so any executor can pick up rework on
+any task.
+
+---
+
+## Prior Art: GitLab Runner
+
+vafi is not a novel architecture. It is the **GitLab Runner model**
+applied to AI agent execution. GitLab Runner is battle-tested
+infrastructure that solved the exact problems we face — Docker-based job
+execution, project-agnostic runners, credential injection, workspace
+setup, and multi-project scaling. Understanding how GitLab solved these
+problems informs our design and prevents us from reinventing solutions
+to already-solved problems.
+
+### The analogy
+
+| GitLab | Our system | Notes |
+|--------|-----------|-------|
+| GitLab Server | vtf API | Source of truth for all work state |
+| GitLab Runner | vf-agents controller | Polls for work, executes it, reports back |
+| Runner registration | Agent registration with vtf | Identity + tag-based routing |
+| Pipeline | Milestone | Ordered collection of work |
+| Job | Task | Single unit of work |
+| `.gitlab-ci.yml` | Task spec YAML | Declarative work definition |
+| Runner tags | Agent tags | Route work to capable agents |
+| Job `image:` | Agent/task image | Container environment for execution |
+| Runner executor | vafi orchestrator | Container lifecycle management |
+| CI_JOB_TOKEN | Agent credentials | Scoped auth for repo access |
+| Artifacts | Commits + completion reports | Work outputs |
+| Services | Supporting containers (DB, etc.) | Infrastructure dependencies |
+| Helper container | Controller (pre-task phase) | Clone repo, prepare workspace |
+| Build container | Harness subprocess | Execute the actual work |
+
+### Key lessons from GitLab Runner
+
+**1. The job is self-describing, not the runner.**
+
+GitLab Runner does not know which repo to clone or which image to use.
+The job payload (from the server) contains everything: repo URL, commit
+ref, container image, environment variables, scripts to run. The runner
+is generic infrastructure.
+
+**Implication for us:** The vtf task (via its project/milestone) should
+carry the repo URL and optionally an image override. The controller does
+not need hardcoded project knowledge. A single executor container can
+serve multiple projects because each task tells it where the code is.
+
+This means vtf needs `repo_url` on the project model. When the controller
+claims a task, it resolves the repo URL from the task's project metadata.
+
+**2. Image selection happens at the job level.**
+
+GitLab's `image:` keyword lets each job specify its container image. The
+runner has a default image, but jobs override it. Admins can restrict
+allowed images (`allowed_images` in runner config).
+
+**Implication for us:** The agent config sets a default image. But a vtf
+project or task spec can override it — a Python project specifies a
+Python-tooled image, a Node project specifies a Node-tooled image. This
+is how we handle heterogeneous workloads without building a new agent
+type per project.
+
+**3. Docker access via socket binding (pragmatic) or DinD (isolated).**
+
+GitLab offers two approaches for jobs that need Docker:
+- **Socket binding:** Mount `/var/run/docker.sock`. Simple, fast (host
+  layer cache), but gives full Docker host access. Acceptable when you
+  trust the workload.
+- **Docker-in-Docker (DinD):** Run a separate Docker daemon as a service
+  container. More isolated but slower (no layer cache) and still requires
+  `privileged = true`.
+
+**Implication for us:** Our executors need Docker access for gates that
+run `docker compose exec api pytest`. For v1, socket binding is
+appropriate — we control the images, the tasks, and the host. Future
+isolation can use DinD if we run untrusted workloads.
+
+**4. The helper container separates workspace prep from execution.**
+
+GitLab uses a special helper image (Alpine + git + gitlab-runner-helper)
+to clone repos, restore caches, and download artifacts. The user's job
+image only runs the job script — it does not need git or artifact tools.
+
+**Implication for us:** The controller serves the helper role. It clones
+the repo, stages the workdir, copies methodology files. The harness
+subprocess only executes the task prompt — it does not need to know about
+vtf, task specs, or workspace setup.
+
+**5. Per-job networking with DNS service discovery.**
+
+GitLab creates a Docker bridge network per job. Service containers
+(postgres, redis) are reachable by hostname. Jobs are network-isolated
+from each other.
+
+**Implication for us:** For v1, the executor container joins a Docker
+network that can reach the vtf API and the git server. If gates run
+`docker compose exec`, they talk to existing containers via the mounted
+Docker socket (the test stack is already running on the host). Future:
+per-task networks for full isolation.
+
+**6. Tag-based routing for multi-project, multi-capability fleets.**
+
+GitLab Runners register with tags (`docker`, `gpu`, `linux`). Jobs
+require tags (`tags: [docker, linux]`). A runner only picks up jobs whose
+tags it satisfies. Runners can be shared (all projects), group-scoped, or
+project-specific.
+
+**Implication for us:** vtf already has tag-based task matching on the
+claimable endpoint. Projects can require specific tags, and only executors
+with matching tags will claim their tasks. This is identical to GitLab's
+model and needs no additional design work.
+
+**7. Credentials are scoped and ephemeral.**
+
+GitLab generates a CI_JOB_TOKEN per job with narrow scope (read access
+to the project repo, write to its container registry). The token is
+revoked when the job completes.
+
+**Implication for us:** For v1, SSH keys or deploy tokens mounted into
+the container provide git access. Future: vtf could issue scoped
+per-task tokens for git operations, following GitLab's pattern.
+
+---
+
+## Design
+
+### New concept: Agent Config
+
+vafi introduces a single declarative file that fully describes an
+autonomous agent — its identity, behavioral role, work source,
+verification gates, and resource limits.
+
+An agent config is not a replacement for provider configs and profiles.
+It **composes** them, adding the fleet-specific concerns that neither
+addresses:
+
+```yaml
+# agents/vtf-executor.yaml
+id: vtf-executor
+description: "Executes vtf tasks using Claude Code"
+
+# Existing vf-agents concepts (composed, not replaced)
+runtime: claude-code
+provider: claude-anthropic               # which provider config to use
+image: vtf-vff-agent:latest             # image override
+
+# Behavioral identity (new)
+role: executor
+methodology: methodologies/executor.md   # agent role instructions
+prompts:                                 # per-action prompt templates
+  task: templates/task.txt
+  rework: templates/rework.txt
+
+# Work source (new)
+work_source:
+  type: vtf
+  api_url: ${VF_VTF_API_URL}
+  poll_interval: 30
+  tags: [executor, claude]
+
+# Verification gates (new)
+gates:
+  - name: task-tests
+    command: "${test_command}"
+  - name: full-suite
+    command: "docker compose exec api pytest tests/"
+
+# Limits (new, extends profile resource limits)
+limits:
+  task_timeout: 600
+  max_rework: 3
+  max_turns: 50
+
+# Auth (references existing provider config)
+auth:
+  type: config-dir
+  source: ~/.claude
+
+# Resources (same as profile, applied at container level)
+resources:
+  memory: 4g
+  cpus: 2
+```
+
+A judge agent uses the same structure with different behavioral config:
+
+```yaml
+# agents/vtf-judge.yaml
+id: vtf-judge
+description: "Reviews vtf task completions"
+
+runtime: claude-code
+provider: claude-anthropic
+image: vtf-vff-agent:latest
+
+role: judge
+methodology: methodologies/judge.md
+prompts:
+  review: templates/review.txt
+
+work_source:
+  type: vtf
+  api_url: ${VF_VTF_API_URL}
+  poll_interval: 30
+  query: pending_completion_review
+  tags: [judge, claude]
+
+gates: []                                # judges don't run gates
+
+limits:
+  task_timeout: 300
+  max_turns: 30
+
+auth:
+  type: config-dir
+  source: ~/.claude
+
+resources:
+  memory: 4g
+  cpus: 2
+```
+
+**Key design choice:** The agent config is a composition layer, not a
+replacement. Provider configs, profiles, and runtime definitions continue
+to exist and serve human-driven mode unchanged. The agent config references
+them and adds fleet-specific concerns.
+
+### Instruction delivery: user-level methodology
+
+The current instruction assembler mounts at `/workdir/CLAUDE.md`. This
+breaks with dynamic workdirs. The fix uses the harness's native
+instruction hierarchy.
+
+Claude Code loads instructions from multiple levels:
+
+```
+~/.claude/CLAUDE.md              <- user-level (always loaded)
+/repo-root/CLAUDE.md             <- project-level (loaded from cwd)
+/repo-root/subdir/CLAUDE.md      <- directory-level (if cwd is deeper)
+```
+
+All levels stack. They do not collide.
+
+**Key enabler: `$HOME != workdir` in vf-agents.** The existing vf-agents
+container layout separates the user home (`/home/node`) from the working
+directory (`/workdir`). This separation, originally designed for clean
+credential isolation, gives us three independent namespaces that map
+directly to our three instruction layers — each with a different
+lifecycle and a different owner:
+
+| Namespace | Path in container | Content | Lifecycle | Owner |
+|-----------|-------------------|---------|-----------|-------|
+| `$HOME` | `/home/node/.claude/CLAUDE.md` | Methodology — agent role instructions, blast radius rules, output format | Container lifetime (stable across all tasks) | Agent config |
+| `cwd` | `/sessions/<ms>/<task>/CLAUDE.md` | Project context — build commands, test patterns, repo conventions | Task lifetime (fresh per clone) | Repository |
+| `-p` arg | n/a (passed as CLI argument) | Task content — spec YAML, test commands, constraints | Invocation lifetime (ephemeral) | vtf API |
+
+No collision. No merging. No path conflicts. The harness's native
+instruction hierarchy and the container's existing namespace separation
+solve the problem without any special handling.
+
+Each layer has a different change frequency:
+
+- **Methodology** changes when the agent process improves. Updated by
+  editing files and restarting the container (or rebuilding the image).
+- **Project context** changes when the repo changes. Always current
+  because it comes from a fresh clone.
+- **Task content** changes per task. Always current because it comes
+  from the vtf API.
+
+**Customization without image rebuild:** Mount a host directory over
+`/opt/vf-agent/methodologies/` to override methodology files. The
+controller reads from this path on init, so changes take effect on the
+next task (or container restart, depending on implementation).
+
+### Prompt construction
+
+The controller builds prompts from templates with variable substitution.
+Templates are shipped in the image at `/opt/vf-agent/templates/` and
+are overridable via volume mount.
+
+**Executor task prompt** (`templates/task.txt`):
+```
+Implement the following task.
+
+## Task: {title} ({id})
+
+## Specification
+{spec}
+
+## Test Commands
+{test_command}
+```
+
+**Executor rework prompt** (`templates/rework.txt`):
+```
+The judge rejected your previous work on this task.
+
+## Judge Feedback
+{review_comments}
+
+## What to fix
+Read the feedback carefully. Fix the issues identified.
+Run tests to verify your fixes. Commit when done.
+```
+
+**Judge review prompt** (`templates/review.txt`):
+```
+Review the implementation for task {id}: {title}.
+
+## Files Changed
+{changed_files}
+
+## Task Specification
+{spec}
+
+Produce a structured verdict: PASS or FAIL with detailed reasoning.
+```
+
+Template variables are resolved from the vtf task API response. The
+controller performs simple string substitution — no template engine
+required.
+
+### The four-layer architecture
+
+```
++----------------------------------------------------------+
+|  Layer 4: Fleet Manager (vafi)                       |
+|                                                           |
+|  Reads agent configs, launches containers, scales pool.   |
+|  v1: generates docker-compose.yml from agent configs      |
+|  Future: k8s operator, direct Docker API, auto-scaling    |
+|                                                           |
+|  vafi apply agents/     <- reconcile desired state   |
+|  vafi status            <- show running agents       |
+|  vafi scale executor=3  <- adjust pool               |
+|  vafi logs executor-1   <- stream controller logs    |
+|  vafi stop              <- graceful shutdown          |
++----------------------------+-----------------------------+
+                             | launches N containers
++----------------------------v-----------------------------+
+|  Layer 3: Controller (Python, inside container)           |
+|                                                           |
+|  The autonomous loop:                                     |
+|  1. Init: register with work source, stage methodology    |
+|  2. Poll for work (new tasks or rework assigned to me)    |
+|  3. Claim task, start heartbeat coroutine                 |
+|  4. Create workdir, clone repo                            |
+|  5. Build prompt from template + task data                |
+|  6. Invoke harness as subprocess                          |
+|  7. Parse structured output (JSON)                        |
+|  8. Run verification gates                                |
+|  9. Report result to work source (complete/fail)          |
+|  10. Loop -> step 2                                       |
++----------------------------+-----------------------------+
+                             | subprocess per task
++----------------------------v-----------------------------+
+|  Layer 2: Harness (Claude Code / Gemini / Pi)             |
+|                                                           |
+|  Loads methodology from ~/.claude/CLAUDE.md               |
+|  Loads project context from cwd/CLAUDE.md                 |
+|  Receives task via -p prompt                              |
+|  Returns structured JSON output                           |
+|  Supports --resume for rework                             |
++----------------------------------------------------------+
+
++----------------------------------------------------------+
+|  Layer 1: Shared Infrastructure                           |
+|                                                           |
+|  Runtime adapters     (command building, output parsing)   |
+|  Credential staging   (tmpfs + copy pattern)              |
+|  Image hierarchy      (base -> toolset -> runtime)        |
+|  Volume conventions   (workdir, config, sessions)         |
++----------------------------------------------------------+
+```
+
+**Layer 1 (Shared Infrastructure)** is the existing vf-agents
+foundation. Runtime adapters, credential staging, image hierarchy, and
+volume conventions are reused unchanged.
+
+**Layer 2 (Harness)** is the AI CLI tool. It receives methodology via
+user-level instructions, project context via repo-level instructions,
+and task content via the `-p` prompt. It returns structured JSON output
+that the controller parses.
+
+**Layer 3 (Controller)** is new. A Python asyncio application running
+inside the container. It implements the autonomous work loop: poll, claim,
+execute, verify, report. It knows about work sources and gates but not
+about specific AI tools — it invokes the harness as a subprocess using
+the adapter's command format.
+
+**Layer 4 (Fleet Manager)** is new. The `vafi` command group reads
+agent configs and manages container lifecycle. For v1, it generates a
+`docker-compose.yml` from agent configs and delegates to `docker compose`.
+The agent config is the source of truth; compose is the deployment
+mechanism.
+
+### Work source abstraction
+
+The controller polls a work source for tasks. The work source is an
+interface, not a vtf-specific integration:
+
+```
+WorkSource
+  Poll()       -> Task or None
+  Claim(id)    -> success/failure
+  Heartbeat(id)
+  Complete(id, result)
+  Fail(id, reason)
+```
+
+**VtfWorkSource** implements this against the vtf API:
+- `Poll()` queries the claimable endpoint with tag matching, plus
+  `changes_requested` tasks assigned to this agent (rework has priority)
+- `Claim()` calls the vtf claim endpoint with agent ID
+- `Heartbeat()` calls the vtf heartbeat endpoint on a timer
+- `Complete()` calls the vtf complete/review-submit endpoint
+- `Fail()` transitions the task to `needs_attention`
+
+**ManualWorkSource** could implement this for human-driven testing:
+- `Poll()` reads from a local queue file or stdin
+- No claim/heartbeat (single consumer)
+- `Complete()` writes result to stdout
+
+The controller does not know which work source it uses. It calls the
+interface. This makes the controller reusable beyond vtf.
+
+### Gate execution
+
+Gates are verification steps that run after the harness completes but
+before the controller reports success to the work source. They are
+declared in the agent config and executed sequentially.
+
+A gate is a shell command. It receives the task workdir as its working
+directory and has access to template variables from the task spec
+(e.g., `${test_command}`).
+
+```yaml
+gates:
+  - name: task-tests
+    command: "${test_command}"
+    required: true            # failure = task failure
+  - name: full-suite
+    command: "pytest tests/"
+    required: true
+```
+
+Gate results are included in the completion report to the work source.
+If any required gate fails, the controller reports the task as failed
+rather than complete.
+
+Judges typically have no gates — they are the gate. An executor's
+gates are typically test commands extracted from the task spec.
+
+### Output parsing and success determination
+
+The controller invokes the harness as a subprocess and receives structured
+JSON output. A key design principle: **the controller never interprets
+the LLM's natural language output**. It uses structured signals (exit
+codes, JSON fields, gate results) to determine success or failure. The
+result text is passed through opaquely — for humans and judges to read,
+not for the controller to parse.
+
+**What the harness returns** (`--output-format json`):
+
+```json
+{
+  "result": "## Task abc - Widget API: Complete\n\nFiles created: ...",
+  "is_error": false,
+  "session_id": "session-abc123",
+  "total_cost_usd": 0.042,
+  "num_turns": 12,
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 24000, "output_tokens": 3800 }
+}
+```
+
+**Three levels of failure, three different responses:**
+
+| Level | Signal | Meaning | Controller action |
+|-------|--------|---------|-------------------|
+| Infrastructure failure | Exit code != 0, stderr patterns | Harness crashed, auth failed, rate limited, OOM | Classify error; retry if transient, fail task if permanent |
+| Harness error | `is_error: true` | Harness ran but could not complete the work | Report task as failed with result text as reason |
+| Task failure | Gate exit code != 0 | Harness thinks it succeeded but tests fail | Report task as failed with gate output |
+
+**The decision tree:**
+
+```
+Harness exit code != 0?
+  |
+  +-> Classify: auth, rate_limit, OOM, timeout, unknown
+  +-> Transient? -> retry (up to N times with backoff)
+  +-> Permanent? -> fail task, report error category
+  |
+is_error == true?
+  |
+  +-> Task failed. Report result text as failure reason.
+  |
+is_error == false?
+  |
+  +-> Extract session_id, store in vtf task metadata
+  +-> Run gates sequentially
+  |     |
+  |     +-> All gates pass? -> Report task complete
+  |     +-> Any gate fails? -> Report task failed with gate output
+```
+
+**Why gates are the source of truth, not the result text:**
+
+The harness returns a free-text completion report ("Files created: ...",
+"Test results: 8/8 passed"). Parsing this is fragile — it is LLM output
+with no guaranteed format. During Phase 8 of vtaskforge development, an
+executor declared success with "all tests passed" while 262 tests were
+actually failing. The simulation caught this only because the human
+supervisor ran the tests independently.
+
+Gates solve this by running the actual verification commands. The
+controller does not need to trust or parse the harness's self-assessment.
+It runs the tests and uses the exit codes.
+
+**What the controller extracts and stores:**
+
+| Field | Stored where | Purpose |
+|-------|-------------|---------|
+| `session_id` | vtf task metadata (via API) | Session resumption on rework — survives container restarts |
+| `total_cost_usd` | vtf task metadata or controller log | Cost tracking and budget enforcement |
+| `num_turns` | Controller log | Diagnostics, tuning `max_turns` limits |
+| `result` | vtf completion report (via API) | Human-readable output for judges and supervisors |
+| `stop_reason` | Controller log | Detect `max_turns_reached` vs normal `end_turn` |
+
+**The session_id lifecycle** (critical for the rework cycle):
+
+```
+1. Harness completes
+   -> controller reads session_id from JSON output
+
+2. Controller stores session_id in vtf task metadata
+   -> survives container restarts, visible to any executor
+
+3. Task goes to review -> judge rejects -> changes_requested
+
+4. Controller picks up rework
+   -> reads session_id from vtf task metadata
+   -> checks if session files exist in task workdir
+
+5. Session files exist?
+   -> claude --resume <session_id> -p "<rework prompt>"
+   Session files missing?
+   -> fresh session with full spec + judge feedback as context
+```
+
+### Image strategy
+
+One new image layer on top of the existing hierarchy:
+
+```
+node:20-bookworm-slim
+  -> vf-agents-base           (git, curl, ssh, jq)
+       -> vf-agents-claude    (+ Claude Code CLI)
+            -> vtf-vff-agent  (+ Python controller, methodologies, templates)
+```
+
+The `vtf-vff-agent` image contains:
+
+```
+/opt/vf-agent/
+  controller/                  # Python controller source
+    __main__.py                # entrypoint
+    poller.py                  # work source polling loop
+    invoker.py                 # harness subprocess management
+    gates.py                   # gate execution
+    heartbeat.py               # async heartbeat coroutine
+    worksources/
+      vtf.py                   # VtfWorkSource implementation
+      manual.py                # ManualWorkSource (testing)
+  methodologies/               # role-specific instructions
+    executor.md                # executor methodology (the 233 lines)
+    judge.md                   # judge methodology
+  templates/                   # prompt templates
+    task.txt
+    rework.txt
+    review.txt
+```
+
+**One image, role selected by environment variable:**
+
+```
+VF_AGENT_ROLE=executor  ->  copies executor.md to ~/.claude/CLAUDE.md
+VF_AGENT_ROLE=judge     ->  copies judge.md to ~/.claude/CLAUDE.md
+```
+
+The controller reads `VF_AGENT_ROLE` on startup, copies the appropriate
+methodology file, and loads the matching prompt templates.
+
+**Customization without rebuild:**
+
+```yaml
+# docker-compose.yml
+executor-1:
+  image: vtf-vff-agent:latest
+  environment:
+    VF_AGENT_ROLE: executor
+  volumes:
+    - ./custom-methodologies:/opt/vf-agent/methodologies:ro
+    - ./custom-templates:/opt/vf-agent/templates:ro
+```
+
+Edit files on the host, restart the container.
+
+### Container-internal architecture
+
+```
++------------------------------------------------------+
+|  vtf-vff-agent container                              |
+|                                                       |
+|  Entrypoint: python -m controller                     |
+|                                                       |
+|  +------------------------------------------------+  |
+|  |  Controller (Python asyncio)                    |  |
+|  |                                                 |  |
+|  |  +-------------------------------------------+  |  |
+|  |  |  Init                                     |  |  |
+|  |  |  - Read VF_AGENT_ROLE, VF_AGENT_ID        |  |  |
+|  |  |  - Copy methodology to ~/.claude/CLAUDE.md|  |  |
+|  |  |  - Register with work source              |  |  |
+|  |  +-------------------------------------------+  |  |
+|  |                    |                            |  |
+|  |                    v                            |  |
+|  |  +-------------------------------------------+  |  |
+|  |  |  Poll Loop (async)                        |  |  |
+|  |  |  - Check rework (priority)                |  |  |
+|  |  |  - Check claimable tasks                  |  |  |
+|  |  |  - Sleep on empty                         |  |  |
+|  |  +-------------------------------------------+  |  |
+|  |           |                                     |  |
+|  |           v  (task found)                       |  |
+|  |  +-------------------------------------------+  |  |
+|  |  |  Task Execution                           |  |  |
+|  |  |  1. Claim task                            |  |  |
+|  |  |  2. Create/reuse workdir                  |  |  |
+|  |  |  3. Clone repo (or reuse for rework)      |  |  |
+|  |  |  4. Build prompt from template            |  |  |
+|  |  |  5. Start heartbeat coroutine             |  |  |
+|  |  |  6. Invoke harness (subprocess)      --------+---> claude -p "..."
+|  |  |  7. Stop heartbeat                        |  |  |
+|  |  |  8. Parse harness output (JSON)           |  |  |
+|  |  |  9. Run gates                             |  |  |
+|  |  |  10. Report to work source                |  |  |
+|  |  +-------------------------------------------+  |  |
+|  |           |                                     |  |
+|  |           v                                     |  |
+|  |      (back to poll loop)                        |  |
+|  +------------------------------------------------+  |
+|                                                       |
+|  /sessions/ (shared volume, RW)                       |
+|    milestone-abc/                                     |
+|      task-001/  <- repo checkout + harness sessions   |
+|      task-002/                                        |
+|                                                       |
+|  /home/node/.claude/ (tmpfs)                          |
+|    CLAUDE.md          <- methodology (copied on init) |
+|    .credentials.json  <- auth (staged on start)       |
+|                                                       |
+|  /opt/vf-agent/ (image or volume, RO)                 |
+|    methodologies/     <- role instruction files        |
+|    templates/         <- prompt templates              |
+|    controller/        <- controller source             |
++------------------------------------------------------+
+```
+
+### Workdir management
+
+All executor containers mount a shared volume at `/sessions/`. The
+controller creates per-task workdirs at
+`/sessions/<milestone-id>/<task-id>/`.
+
+**New task:** Controller creates the directory, clones the repo, sets
+cwd for the harness invocation.
+
+**Rework:** Controller reuses the existing workdir. The repo state and
+harness session files from the previous attempt are preserved, enabling
+session resumption.
+
+**Cleanup:** Workdirs persist until milestone completion. For v1, manual
+cleanup (`rm -rf /sessions/<milestone-id>/`). Future: automated via
+orchestrator event.
+
+### Session resumption for rework
+
+When a judge rejects a task, the controller resumes the original harness
+session rather than starting fresh:
+
+1. Controller captures `session_id` from the harness JSON output
+2. Stores `session_id` in vtf task metadata (survives controller restart)
+3. On rework, checks if session files exist in the task workdir
+4. If yes: `claude --resume <session-id> -p "<rework prompt>"`
+5. If no: falls back to fresh session with full spec + judge feedback
+
+Because session files live in the task workdir on the shared volume,
+**any executor** can resume any task's session. Rework is not tied to a
+specific executor.
+
+### The contract: orchestrator <-> controller
+
+The vafi orchestrator (Layer 4) and controller (Layer 3) communicate through
+environment variables and filesystem conventions only. No API, no socket,
+no shared memory.
+
+**Environment variables (set by vafi orchestrator, read by controller):**
+
+```bash
+# Identity
+VF_AGENT_ID=executor-1           # unique agent identity
+VF_AGENT_ROLE=executor           # executor | judge
+VF_AGENT_TAGS=executor,claude    # comma-separated tags for task matching
+
+# Work source
+VF_WORK_SOURCE=vtf               # work source type
+VF_VTF_API_URL=http://vtf:8001   # vtf API endpoint
+VF_POLL_INTERVAL=30              # seconds between polls
+
+# Limits
+VF_TASK_TIMEOUT=600              # per-task timeout in seconds
+VF_MAX_REWORK=3                  # max rework attempts before escalation
+VF_MAX_TURNS=50                  # max harness turns per invocation
+
+# Repo (not hardcoded — resolved per task from vtf project metadata)
+# VF_REPO_URL and VF_REPO_BRANCH come from the task's project in vtf,
+# not from env vars. The controller queries vtf for project details
+# when it claims a task. This enables multi-project execution.
+```
+
+**Filesystem conventions:**
+
+| Path | Purpose | Mount type |
+|------|---------|------------|
+| `/opt/vf-agent/methodologies/` | Role instruction files | Image layer or RO volume |
+| `/opt/vf-agent/templates/` | Prompt templates | Image layer or RO volume |
+| `/opt/vf-agent/controller/` | Controller source | Image layer |
+| `/sessions/` | Per-task workdirs (repo + sessions) | Shared RW volume |
+| `/home/node/.claude/` | Harness config (credentials + methodology) | tmpfs |
+
+### vafi orchestrator: `vafi`
+
+New command group for managing autonomous agent containers.
+
+```bash
+vafi apply agents/            # read agent configs, reconcile containers
+vafi status                   # show running agents + current task
+vafi scale executor=3         # adjust replica count
+vafi logs executor-1          # stream controller logs
+vafi stop                     # graceful shutdown (finish current tasks)
+vafi destroy                  # force stop all containers
+```
+
+**v1 implementation:** `vafi apply` reads agent config YAML files,
+generates a `docker-compose.yml`, and runs `docker compose up -d`. The
+agent config is the source of truth. The compose file is a generated
+artifact, not hand-written.
+
+**Generated compose example:**
+
+```yaml
+# Generated by vafi apply — do not edit
+services:
+  executor-1:
+    image: vtf-vff-agent:latest
+    environment:
+      VF_AGENT_ID: executor-1
+      VF_AGENT_ROLE: executor
+      VF_AGENT_TAGS: executor,claude
+      VF_WORK_SOURCE: vtf
+      VF_VTF_API_URL: http://vtf:8001
+      VF_POLL_INTERVAL: "30"
+      VF_TASK_TIMEOUT: "600"
+      VF_MAX_REWORK: "3"
+    volumes:
+      - sessions:/sessions
+      - /home/user/.claude:/tmp/vfa-config:ro
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2"
+    restart: unless-stopped
+
+  judge-1:
+    image: vtf-vff-agent:latest
+    environment:
+      VF_AGENT_ID: judge-1
+      VF_AGENT_ROLE: judge
+      VF_AGENT_TAGS: judge,claude
+      VF_WORK_SOURCE: vtf
+      VF_VTF_API_URL: http://vtf:8001
+    volumes:
+      - sessions:/sessions
+      - /home/user/.claude:/tmp/vfa-config:ro
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2"
+    restart: unless-stopped
+
+volumes:
+  sessions:
+```
+
+### Relationship to vf-agents
+
+vafi is a separate project, not a mode of vf-agents. They serve different
+users but share infrastructure:
+
+| System | User | Purpose |
+|--------|------|---------|
+| `vfa` (vf-agents) | Human developer | Run AI tools in containers interactively |
+| `vafi` | Automated systems (vtf) | Autonomous agent fleet execution |
+
+**What vafi reuses from vf-agents:**
+
+| Building block | How vafi uses it |
+|----------------|-----------------|
+| Image hierarchy (base, toolset, runtime layers) | vafi images build on top of `vf-agents-claude` |
+| Credential staging patterns (tmpfs + copy) | Same auth mechanism for harness inside containers |
+| Adapter knowledge (CLI flags, output format, session resume) | Controller invokes harness using the same command patterns |
+| Volume conventions | Consistent mount patterns across both systems |
+
+**What vafi builds independently:**
+
+| Component | Purpose |
+|-----------|---------|
+| Controller (Python) | Autonomous work loop inside containers |
+| Agent configs | Declarative agent definitions (identity, role, work source, gates) |
+| vafi orchestrator | Container lifecycle, fleet management |
+| Work source abstraction | Pluggable task sources (vtf first) |
+| Gate system | Declarative verification after harness completion |
+| Worker images | `vtf-vff-agent` and future specialized images |
+
+---
+
+## Remaining Design Gaps
+
+The following gaps require decisions before implementation begins.
+
+### Gap 6: Supervisor role
+
+The supervisor manages board state — submitting tasks when DAG
+dependencies are met. It is separate from executors and judges.
+
+**Open questions:**
+- Is the supervisor a separate container running its own controller?
+- Is it a vtf background job (Celery task)?
+- Is it a `vafi` sidecar?
+- Does it need an AI harness at all, or is it pure logic?
+
+### Gap 7: Registration and identity
+
+Executors and judges need unique identities for vtf agent registration.
+
+**Open questions:**
+- Stable ID (`executor-{hostname}`) or ephemeral (UUID per container)?
+- Registration on startup — what happens on container restart?
+  Re-register or reuse existing?
+- How does the vtf agent registration API handle duplicate IDs?
+- GitLab Runner uses a registration token exchange — runner registers
+  once and receives a runner token for future communication. Should
+  we follow a similar pattern?
+
+### Gap 8: Resource controls
+
+Per-task limits on harness invocation: max turns, timeout, cost cap.
+
+**Open questions:**
+- Where do limits come from — agent config, task spec, or both?
+- Which takes precedence when task spec and agent config disagree?
+- How does the controller enforce max_turns (harness flag vs
+  output check)?
+- How does cost tracking work (harness reports cost in output)?
+
+### Gap 9: Repo and workspace provisioning
+
+How does the controller prepare the workspace for each task? Informed
+by GitLab Runner's helper container pattern.
+
+**Open questions:**
+- Repo URL comes from vtf project metadata — does vtf need a
+  `repo_url` field on the project model?
+- Git clone strategy: fresh clone per task (clean, slow) or
+  fetch into cached clone (fast, risk of stale state)?
+- Git credentials: SSH keys mounted into container, or deploy
+  tokens injected per-task?
+- Branch selection: from task spec, milestone, or project default?
+- Shallow clone (`--depth 1`) for speed, or full history for
+  `git blame` / harness context?
+
+### Gap 10: Docker access for gates
+
+Executors run verification gates that may need Docker access
+(e.g., `docker compose exec api pytest`).
+
+**Open questions:**
+- v1: Docker socket binding (`/var/run/docker.sock`) — acceptable
+  when we control all workloads?
+- How does the executor know which compose project to target?
+  Is the test stack already running, or does the executor start it?
+- Future: DinD sidecar for isolation when running untrusted tasks?
+
+### Gap 11: Image selection per task
+
+GitLab lets each job specify its container image. Should vtf tasks
+(or projects) be able to override the executor's default image?
+
+**Open questions:**
+- Where is the image override specified — project, milestone, or
+  task spec?
+- Does the controller need to support pulling and switching images
+  mid-lifecycle, or is image selection a vafi orchestrator concern
+  (one container = one image)?
+- How does this interact with the one-image-multiple-roles model?
+
+---
+
+## Spikes
+
+Two technical spikes must be run before controller implementation begins.
+
+### Spike 1: Harness session and workdir behavior
+
+**Goal:** Determine how the harness stores and resumes sessions across
+container boundaries and working directory changes.
+
+**Questions to answer:**
+1. Where does Claude Code store session files? (`~/.claude/`? Relative
+   to cwd? Configurable?)
+2. Are session files tied to `$HOME` or to the working directory?
+3. Does `--resume` work when session files are on a mounted volume?
+4. Can a harness instance resume a session created by a different
+   container (same image, same paths)?
+5. Can the working directory change between the initial invocation
+   and `--resume`?
+
+**Method:** Run Claude Code in a container with a mounted volume. Execute
+a task, stop the container, start a new container with the same volume,
+attempt `--resume`.
+
+### Spike 2: Dynamic workdir auth resolution
+
+**Goal:** Verify that the harness resolves auth from `$HOME` (stable)
+rather than from cwd (changes per task).
+
+**Questions to answer:**
+1. Does Claude Code read credentials from `~/.claude/` regardless of cwd?
+2. Does changing cwd between invocations break auth?
+3. Are there any cwd-relative config lookups that would fail?
+
+**Method:** Run Claude Code with credentials staged at `~/.claude/`.
+Invoke once with cwd `/workdir/a/`, then again with cwd `/workdir/b/`.
+Verify both invocations authenticate successfully.
