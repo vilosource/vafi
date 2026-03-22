@@ -1,0 +1,51 @@
+id: m2.8
+name: Agent image and k8s deployment
+depends_on:
+- m2.7
+description: 'Build the vafi-agent Docker image with the controller baked in,
+
+  create the k8s deployment manifest, and deploy to the cluster.
+
+  This is the M2 value gate — first autonomous task execution.
+
+  '
+files:
+  create:
+  - images/agent/Dockerfile
+  - k8s/vafi-agents/executor-pool.yaml
+  - k8s/vafi-agents/sessions-pvc.yaml
+  - k8s/vafi-agents/secrets.yaml
+  - k8s/vafi-agents/kustomization.yaml
+  - scripts/deploy.sh
+  modify:
+  - scripts/build-images.sh
+implementation:
+  approach: "Create images/agent/Dockerfile:\n- FROM vafi-claude:latest\n- COPY src/controller/ /opt/vf-agent/controller/\n\
+    - COPY methodologies/ /opt/vf-agent/methodologies/\n- COPY templates/ /opt/vf-agent/templates/\n- COPY pyproject.toml\
+    \ /opt/vf-agent/\n- RUN pip install /opt/vf-agent/\n- Entrypoint script that:\n  1. Copies methodology to ~/.claude/CLAUDE.md\
+    \ based on VF_AGENT_ROLE\n  2. Runs python -m controller\n\nCreate k8s/vafi-agents/executor-pool.yaml:\n- Deployment with\
+    \ replicas=1\n- Pod spec with VF_* env vars from config and secrets\n- Volume mounts: sessions PVC at /sessions/\n- imagePullPolicy:\
+    \ Always\n\nCreate k8s/vafi-agents/sessions-pvc.yaml:\n- PVC for /sessions/ shared volume (10Gi)\n\nCreate k8s/vafi-agents/secrets.yaml:\n\
+    - Placeholder for Claude credentials and vtf token\n- Actual values applied manually (gitignored)\n\nCreate scripts/deploy.sh:\n\
+    - kubectl apply namespaces\n- kubectl apply -k k8s/vafi-agents/\n\nUpdate scripts/build-images.sh to build vafi-agent\
+    \ layer.\n\nVALUE GATE TEST:\n1. Build and push vafi-agent image\n2. Create a test task in vtf (via web UI or vtf CLI)\n\
+    3. Deploy executor-pool\n4. Watch logs: kubectl logs -f deploy/executor-pool -n vafi-agents\n5. Executor registers, polls,\
+    \ finds task, claims, clones, executes,\n   runs gates, reports complete\n6. vtf shows task as done\n"
+  references:
+  - docs/vafi-DESIGN.md (image strategy, container-internal architecture)
+  - docs/vafi-DESIGN.md (k8s deployment, env vars)
+  - CLAUDE.md (make targets)
+  constraints:
+  - One image, role by VF_AGENT_ROLE env var
+  - Image pushed to internal registry (192.168.2.90:30500)
+  - Secrets never committed to git
+acceptance_criteria:
+- vafi-agent image builds successfully
+- Executor pod starts in k8s and registers with vtf
+- Executor picks up a task, clones repo, invokes Claude Code
+- Gates run and result reported to vtf
+- Task shows as complete (or failed with gate output) in vtf
+test_command: KUBECONFIG=~/.kube/vafi-dev.yaml kubectl -n vafi-agents get pods && KUBECONFIG=~/.kube/vafi-dev.yaml kubectl
+  -n vafi-agents logs deploy/executor-pool --tail=20
+agent_model: sonnet
+judge: true

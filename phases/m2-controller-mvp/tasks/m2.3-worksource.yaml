@@ -1,65 +1,88 @@
-title: "M2.3: WorkSource protocol and VtfWorkSource"
-description: |
-  Implement the abstract WorkSource protocol and the vtf-specific
+id: m2.3
+name: WorkSource protocol and VtfWorkSource
+depends_on:
+- m2.2
+description: 'Implement the abstract WorkSource protocol and the vtf-specific
+
   implementation. The controller depends only on WorkSource — this
+
   is the decoupling seam between vafi and vtf.
 
+  '
 files:
   create:
-    - src/controller/worksources/__init__.py
-    - src/controller/worksources/protocol.py
-    - src/controller/worksources/vtf.py
-    - src/controller/types.py
-    - tests/test_worksource.py
-
+  - src/controller/worksources/__init__.py
+  - src/controller/worksources/protocol.py
+  - src/controller/worksources/vtf.py
+  - src/controller/types.py
+  - tests/test_worksource.py
 implementation:
-  approach: |
-    Create src/controller/types.py with shared data types:
+  approach: 'Create src/controller/types.py with shared data types:
+
     - AgentInfo(id, token)
+
     - RepoInfo(url, branch)
+
     - TaskInfo(id, title, spec, project_id, test_command, needs_review, assigned_to)
+
     - ReworkContext(session_id, judge_feedback, attempt_number)
+
     - GateResult(name, command, exit_code, stdout, passed)
+
     - ExecutionResult(success, session_id, completion_report, cost_usd, num_turns, gate_results)
 
+
     Create src/controller/worksources/protocol.py with WorkSource Protocol:
+
     - register(name, tags) -> AgentInfo
+
     - poll(agent_id, tags) -> TaskInfo | None
+
     - claim(task_id, agent_id) -> TaskInfo
+
     - heartbeat(task_id) -> None
+
     - complete(task_id, result: ExecutionResult) -> None
+
     - fail(task_id, reason) -> None
+
     - get_repo_info(project_id) -> RepoInfo
+
     - get_rework_context(task_id) -> ReworkContext
+
     - count_rework_attempts(task_id) -> int
 
+
     Create src/controller/worksources/vtf.py with VtfWorkSource:
+
     - Implements WorkSource using VtfClient
+
     - poll() checks rework first (priority), then claimable
+
     - complete() stores completion report and session_id as notes, then calls complete
+
     - get_rework_context() reads reviews and notes from vtf
+
     - count_rework_attempts() counts changes_requested reviews
 
+
     Tests should use the live vtf API — register, poll (expect None
+
     when no tasks), verify the abstraction works.
 
+    '
   references:
-    - docs/vtf-vafi-interface-CONTRACT.md (WorkSource protocol, VtfWorkSource, data types)
-
+  - docs/vtf-vafi-interface-CONTRACT.md (WorkSource protocol, VtfWorkSource, data types)
   constraints:
-    - WorkSource is a Protocol (typing.Protocol), not ABC
-    - VtfWorkSource takes a VtfClient in its constructor
-    - Data types are dataclasses, not dicts
-
+  - WorkSource is a Protocol (typing.Protocol), not ABC
+  - VtfWorkSource takes a VtfClient in its constructor
+  - Data types are dataclasses, not dicts
 acceptance_criteria:
-  - WorkSource protocol defined with all methods
-  - All 6 data types implemented as dataclasses
-  - VtfWorkSource implements WorkSource using VtfClient
-  - poll() prioritizes rework over new work
-  - Tests verify register and poll through the abstraction
-
-test_command: "cd /home/jasonvi/GitHub/vafi && pytest tests/test_worksource.py -q"
+- WorkSource protocol defined with all methods
+- All 6 data types implemented as dataclasses
+- VtfWorkSource implements WorkSource using VtfClient
+- poll() prioritizes rework over new work
+- Tests verify register and poll through the abstraction
+test_command: cd /home/jasonvi/GitHub/vafi && pytest tests/test_worksource.py -q
 agent_model: sonnet
 judge: true
-depends_on:
-  - m2.2

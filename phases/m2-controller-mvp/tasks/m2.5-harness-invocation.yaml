@@ -1,0 +1,54 @@
+id: m2.5
+name: Harness invocation — clone, prompt, execute
+depends_on:
+- m2.4
+description: 'Implement the task execution pipeline: clone the repo, build the
+
+  prompt from a template, invoke Claude Code CLI as a subprocess,
+
+  and parse the structured JSON output. This is the core of vafi.
+
+  '
+files:
+  create:
+  - src/controller/invoker.py
+  - src/controller/prompt.py
+  - templates/task.txt
+  - methodologies/executor.md
+  - tests/test_invoker.py
+  modify:
+  - src/controller/controller.py
+implementation:
+  approach: "Create src/controller/prompt.py:\n- load_template(path) -> str\n- render_prompt(template, task: TaskInfo) ->\
+    \ str\n- Simple string format: {id}, {title}, {spec}, {test_command}\n\nCreate templates/task.txt:\n```\nImplement the\
+    \ following task.\n\n## Task: {title} ({id})\n\n## Specification\n{spec}\n\n## Test Commands\n{test_command}\n```\n\n\
+    Create methodologies/executor.md:\n- Agent role instructions (blast radius analysis, reference-driven\n  development,\
+    \ completion report format)\n- This gets copied to ~/.claude/CLAUDE.md inside the container\n\nCreate src/controller/invoker.py\
+    \ with a HarnessInvoker class:\n- __init__(config: AgentConfig)\n- async invoke(task: TaskInfo, repo: RepoInfo, workdir:\
+    \ Path,\n               prompt: str) -> ExecutionResult\n\ninvoke() does:\n1. Clone repo into workdir if not already cloned:\n\
+    \   git clone --branch {repo.branch} {repo.url} {workdir}\n2. Build the CLI command:\n   claude -p \"{prompt}\" --output-format\
+    \ json --dangerously-skip-permissions\n3. Run as subprocess with cwd=workdir, capture stdout/stderr\n4. Parse JSON output:\
+    \ extract result, is_error, session_id,\n   total_cost_usd, num_turns\n5. Return ExecutionResult\n\nError handling:\n\
+    - Exit code != 0: classify error (auth, rate_limit, OOM, timeout)\n- is_error == true: task failed, include result text\n\
+    - Parse failure: task failed with raw output\n\nUpdate controller.py execute() method:\n- Create workdir at /sessions/<milestone-id>/<task-id>/\n\
+    - Get repo info from work source\n- Build prompt from template\n- Call invoker.invoke()\n- Return the ExecutionResult\
+    \ (gates come in next task)\n"
+  references:
+  - docs/vafi-DESIGN.md (prompt construction, output parsing, three-level failure)
+  - docs/controller-DESIGN.md (D6 dynamic workdirs, D8 subprocess)
+  - docs/vtf-vafi-interface-CONTRACT.md (ExecutionResult type)
+  constraints:
+  - Use subprocess, not Docker API
+  - Parse JSON output only — never parse LLM text
+  - Workdir at /sessions/<milestone-id>/<task-id>/ (or configurable base)
+  - Git clone via subprocess (not gitpython)
+acceptance_criteria:
+- Prompt template renders correctly with task data
+- Invoker clones repo into workdir
+- Invoker runs claude -p with correct flags
+- JSON output parsed into ExecutionResult
+- Error classification works (exit code, is_error, parse failure)
+- Controller creates workdir and calls invoker
+test_command: cd /home/jasonvi/GitHub/vafi && pytest tests/test_invoker.py -q
+agent_model: sonnet
+judge: true

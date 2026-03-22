@@ -1,58 +1,75 @@
-title: "M2.2: VtfClient — async HTTP client for vtf API"
-description: |
-  Implement the HTTP client layer that talks to the vtf REST API.
+id: m2.2
+name: VtfClient — async HTTP client for vtf API
+depends_on:
+- m2.1
+description: 'Implement the HTTP client layer that talks to the vtf REST API.
+
   This is a thin wrapper — one method per endpoint, no business logic.
 
+  '
 files:
   create:
-    - src/controller/vtf_client.py
-    - tests/test_vtf_client.py
-    - scripts/test-vtf-client.py
-
+  - src/controller/vtf_client.py
+  - tests/test_vtf_client.py
+  - scripts/test-vtf-client.py
 implementation:
-  approach: |
-    Implement VtfClient using httpx.AsyncClient. Each method maps to
+  approach: 'Implement VtfClient using httpx.AsyncClient. Each method maps to
+
     one vtf API call as defined in the interface contract.
 
+
     Methods to implement:
+
     - register_agent(name, tags) -> dict
+
     - list_claimable(tags, agent_id) -> list[dict]
+
     - list_tasks(status, assigned_to=None, expand=None) -> list[dict]
+
     - claim_task(task_id, agent_id, tags) -> dict
+
     - heartbeat(task_id) -> None
+
     - complete_task(task_id) -> None
+
     - fail_task(task_id) -> None
+
     - get_project(project_id) -> dict
+
     - add_note(task_id, text, actor_id) -> dict
+
     - get_task(task_id, expand=None) -> dict
+
     - submit_review(task_id, decision, reason, reviewer_id) -> dict
 
+
     The client stores the auth token after registration and includes
+
     it in all subsequent requests via Authorization header.
+
 
     Error handling: raise specific exceptions for 404, 409, 422, 500.
 
+
     Create scripts/test-vtf-client.py as a runnable integration test
+
     that registers an agent, polls for tasks, and prints results.
+
     This runs against the live vtf API (localhost:8002 or in-cluster).
 
+    '
   references:
-    - docs/vtf-vafi-interface-CONTRACT.md (all 14 interaction points)
-
+  - docs/vtf-vafi-interface-CONTRACT.md (all 14 interaction points)
   constraints:
-    - Use httpx, not aiohttp or requests
-    - All methods are async
-    - No business logic — just HTTP calls and JSON parsing
-
+  - Use httpx, not aiohttp or requests
+  - All methods are async
+  - No business logic — just HTTP calls and JSON parsing
 acceptance_criteria:
-  - All methods listed above are implemented
-  - Unit tests cover register, poll, claim, complete, fail
-  - scripts/test-vtf-client.py runs against live vtf and succeeds
-  - Auth token stored after registration, used in subsequent calls
-  - Proper error classes for 404, 409, 422
-
-test_command: "cd /home/jasonvi/GitHub/vafi && pytest tests/test_vtf_client.py -q"
+- All methods listed above are implemented
+- Unit tests cover register, poll, claim, complete, fail
+- scripts/test-vtf-client.py runs against live vtf and succeeds
+- Auth token stored after registration, used in subsequent calls
+- Proper error classes for 404, 409, 422
+test_command: cd /home/jasonvi/GitHub/vafi && pytest tests/test_vtf_client.py -q
 agent_model: sonnet
 judge: true
-depends_on:
-  - m2.1

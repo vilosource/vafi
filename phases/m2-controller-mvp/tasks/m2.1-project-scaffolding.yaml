@@ -1,0 +1,35 @@
+id: m2.1
+name: Python project scaffolding
+depends_on: []
+description: 'Set up the Python project structure for the vafi controller.
+
+  This is the foundation all other M2 tasks build on.
+
+  '
+files:
+  create:
+  - pyproject.toml
+  - src/controller/__init__.py
+  - src/controller/__main__.py
+  - src/controller/config.py
+  - tests/__init__.py
+  - tests/conftest.py
+implementation:
+  approach: "Create pyproject.toml with:\n- Project name: vafi-controller\n- Python >= 3.11\n- Dependencies: httpx (async\
+    \ HTTP), pyyaml\n- Dev dependencies: pytest, pytest-asyncio\n- Entry point: python -m controller\n\nCreate src/controller/__main__.py\
+    \ as the entry point that:\n- Reads config from environment variables (VF_AGENT_ID, VF_AGENT_ROLE,\n  VF_VTF_API_URL,\
+    \ VF_POLL_INTERVAL, etc.)\n- Prints config and exits (no loop yet — that's M2.3)\n\nCreate src/controller/config.py with\
+    \ an AgentConfig dataclass that\nreads all VF_* env vars with sensible defaults.\n\nCreate tests/conftest.py with basic\
+    \ pytest fixtures.\n"
+  references:
+  - docs/vafi-DESIGN.md (env vars section, line ~906)
+  - docs/vtf-vafi-interface-CONTRACT.md (data types)
+acceptance_criteria:
+- pyproject.toml is valid and installable (pip install -e .)
+- python -m controller reads env vars and prints config
+- pytest runs with 0 errors (even if 0 tests)
+- AgentConfig reads VF_AGENT_ID, VF_AGENT_ROLE, VF_VTF_API_URL, VF_POLL_INTERVAL, VF_TASK_TIMEOUT, VF_MAX_REWORK, VF_AGENT_TAGS
+test_command: cd /home/jasonvi/GitHub/vafi && pip install -e . && python -m controller --help 2>&1 || python -m controller
+  2>&1 | head -5 && pytest tests/ -q
+agent_model: sonnet
+judge: true
