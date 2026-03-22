@@ -30,24 +30,37 @@ No blockers from CLI behavior.
 **Goal:** A running K8s cluster with vafi's container image built and
 deployable. The foundation everything else runs on.
 
-### K8s cluster (requires design decisions)
+### K8s cluster — k3s on Hyper-V VM (decided)
 
-- [ ] Cluster type decision: AKS (managed) vs k3s (self-hosted) vs other
-- [ ] Cluster provisioning
-- [ ] Networking: vtf API reachable from agent pods, git server reachable
-- [ ] Storage: PersistentVolume for `/sessions/` (shared across executor pods)
-- [ ] Secrets: Claude Code credentials, SSH keys for git, vtf API tokens
-- [ ] Container registry: where vafi images are stored and pulled from
-- [ ] Namespaces: `vafi-system` (vtf API, supervisor), `vafi-agents` (executor/judge pools)
-- [ ] RBAC: what agent pods can access
+**Setup:** Ubuntu Server 24.04 on Hyper-V, k3s installed via standard
+script. `kubectl` on WSL2 points at the VM's IP. Production cluster
+type (AKS or other) is a separate future decision — same manifests.
 
-### Container image
+**VM provisioning:**
+- [ ] Create Hyper-V VM (Ubuntu Server 24.04, minimal)
+- [ ] Static IP or DHCP reservation for stable address
+- [ ] Install k3s (`curl -sfL https://get.k3s.io | sh -`)
+- [ ] Copy kubeconfig to WSL2 (`~/.kube/config`), update server IP
+- [ ] Verify `kubectl get nodes` works from WSL2
+
+**Cluster configuration:**
+- [ ] Networking: vtf API reachable from agent pods, git server (GitLab) reachable
+- [ ] Storage: PersistentVolume for `/sessions/` (k3s local-path-provisioner works out of the box)
+- [ ] Secrets: Claude Code credentials (`~/.claude/`), SSH keys for git, vtf API token
+- [ ] Namespaces: `vafi-system`, `vafi-agents`
+
+### Container images
+
+**Build on WSL2, import to k3s VM** (no registry needed for dev):
+```
+docker save vafi-agent:latest | ssh vafi-vm 'sudo k3s ctr images import -'
+```
 
 - [ ] `vafi-base` — Dockerfile: `node:20-bookworm-slim` + git, curl, ssh, jq, python
 - [ ] `vafi-claude` — Dockerfile: `vafi-base` + Claude Code CLI
 - [ ] `vafi-agent` — Dockerfile: `vafi-claude` + Python controller, methodologies, templates
-- [ ] Image build pipeline (GitHub Actions or manual)
-- [ ] Push to container registry
+- [ ] Build script that builds all layers and imports to the VM
+- [ ] Container registry decision deferred — local import is sufficient for dev
 
 ### Value gate
 
@@ -59,9 +72,9 @@ just proof the platform works.
 
 | Decision | Options | Notes |
 |----------|---------|-------|
-| Cluster type | AKS, k3s on VM, k3s on WSL, kind (dev only) | Cost, complexity, persistence tradeoffs |
-| Container registry | GHCR, ACR, Harbor, local registry | Must be pullable from cluster |
+| VM sizing | 2 CPU / 4 GB vs 4 CPU / 8 GB | Depends on how many concurrent agent pods we want |
 | vtf deployment | In-cluster (vafi-system namespace) vs external | Dogfood instance currently runs on localhost:8001 |
+| Container registry | Deferred — local import for dev, GHCR or ACR for prod | Not needed until CI/CD or multi-node |
 
 ---
 
