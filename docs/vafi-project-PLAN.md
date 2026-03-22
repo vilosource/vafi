@@ -25,10 +25,17 @@ No blockers from CLI behavior.
 
 ---
 
-## Milestone 1: K8s Platform + Image
+## Milestone 1: K8s Platform + Image — DONE
 
 **Goal:** A running K8s cluster with vafi's container image built and
 deployable. The foundation everything else runs on.
+
+**Completed 2026-03-22:**
+- k3s cluster on vafi-1.dev.viloforge.com (192.168.2.90)
+- Internal registry at 192.168.2.90:30500
+- vtf dogfood in-cluster (vafi-system namespace)
+- vafi-base (364MB) and vafi-claude (470MB) images in registry
+- M1 value gate passed: pod in vafi-agents reaches vtf via k8s DNS
 
 ### K8s cluster — k3s on dedicated laptop (decided)
 
@@ -101,26 +108,26 @@ just proof the platform works.
 invokes Claude Code, runs gates, and reports the result back. Deployed
 on K8s from day one.
 
+**Execution method:** Full simulation via vtf — tasks tracked as a
+workplan, implemented manually, reviewed via judge process.
+
 ### vtf changes needed (parallel stream, vtaskforge repo)
 
-- [ ] GAP-4: State machine `changes_requested` -> `doing` transition
-- [ ] GAP-1: Agent registration upsert (create or update by name)
+- [x] GAP-4: State machine `changes_requested` -> `doing` transition
+- [x] GAP-1: Agent registration upsert (create or update by name)
 
-### vafi work
+### Task breakdown (specs in `phases/m2-controller-mvp/`)
 
-- [ ] Python project scaffolding (`pyproject.toml`, package structure)
-- [ ] `VtfClient` — async HTTP client for vtf API
-  - `register_agent()`, `list_claimable()`, `claim_task()`,
-    `heartbeat()`, `complete_task()`, `fail_task()`, `get_project()`,
-    `add_note()`, `get_task()`
-- [ ] `WorkSource` protocol (abstract interface)
-- [ ] `VtfWorkSource` — vtf implementation of WorkSource
-- [ ] Controller loop: poll -> claim -> clone -> build prompt -> invoke harness -> parse output -> run gates -> report
-- [ ] Prompt template: `templates/task.txt`
-- [ ] Methodology file: `methodologies/executor.md`
-- [ ] Credential staging at pod start (copy to `$HOME/.claude/`)
-- [ ] K8s manifests: executor Deployment (replicas=1), PVC for sessions
-- [ ] Docker Compose for local dev/testing only
+| Task | Description | Depends on | Test |
+|------|-------------|-----------|------|
+| M2.1 | Python project scaffolding | — | pip install -e ., pytest |
+| M2.2 | VtfClient (async HTTP) | M2.1 | Integration test against live vtf |
+| M2.3 | WorkSource protocol + VtfWorkSource | M2.2 | Register + poll through abstraction |
+| M2.4 | Controller poll-claim loop | M2.3 | Deploy to k8s, watch it claim a task |
+| M2.5 | Harness invocation (clone, prompt, execute) | M2.4 | Run against manual work source locally |
+| M2.6 | Gate execution + result reporting | M2.5 | Gates run, result reported to vtf |
+| M2.7 | Async heartbeat | M2.6 | Claim doesn't expire during execution |
+| M2.8 | Agent image + k8s deploy | M2.7 | **M2 value gate** — end-to-end in k8s |
 
 ### Value gate
 

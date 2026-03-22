@@ -1,0 +1,66 @@
+title: "M2.6: Gate execution and result reporting"
+description: |
+  Implement verification gates that run after the harness completes.
+  Gates are shell commands (typically test commands) whose exit codes
+  determine task success or failure. The controller reports the final
+  result to vtf.
+
+files:
+  create:
+    - src/controller/gates.py
+    - tests/test_gates.py
+  modify:
+    - src/controller/controller.py
+
+implementation:
+  approach: |
+    Create src/controller/gates.py with a GateRunner class:
+    - __init__(gates: list[GateConfig])
+    - async run_gates(workdir: Path, task: TaskInfo) -> list[GateResult]
+
+    GateConfig is a simple dataclass:
+    - name: str
+    - command: str (supports ${test_command} variable substitution)
+    - required: bool (default True)
+
+    For MVP, gates come from the task spec's test_command field:
+    - If test_command exists, create one gate from it
+    - Run it as a subprocess in the task workdir
+    - Capture exit code, stdout, stderr
+    - Return GateResult
+
+    Update controller.py execute() method to:
+    1. Invoke harness (M2.5)
+    2. If harness succeeded (is_error=false, exit code 0):
+       a. Run gates
+       b. All gates pass → work_source.complete(task_id, result)
+       c. Any gate fails → work_source.fail(task_id, gate output)
+    3. If harness failed:
+       a. work_source.fail(task_id, error reason)
+    4. Log the outcome
+
+    The completion flow includes storing the completion report and
+    session_id via work_source.complete(), which internally calls
+    add_note() then complete_task().
+
+  references:
+    - docs/vafi-DESIGN.md (gate execution section)
+    - docs/controller-DESIGN.md (D6)
+
+  constraints:
+    - Gates run as subprocesses in the task workdir
+    - Gate failure = task failure (for required gates)
+    - Never parse gate stdout for pass/fail — exit code only
+
+acceptance_criteria:
+  - GateRunner executes commands as subprocess in workdir
+  - Gate results include exit code, stdout, pass/fail
+  - Controller completes task when all gates pass
+  - Controller fails task when any required gate fails
+  - Completion report and session_id stored in vtf
+
+test_command: "cd /home/jasonvi/GitHub/vafi && pytest tests/test_gates.py -q"
+agent_model: sonnet
+judge: true
+depends_on:
+  - m2.5
