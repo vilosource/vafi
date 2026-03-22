@@ -1867,19 +1867,25 @@ Method: Run Claude Code in a container with a mounted volume. Execute
 a task, stop the container, start a new container with the same volume,
 attempt `--resume`.
 
-**Spike 2: Dynamic workdir auth resolution**
+**Spike 2: Dynamic workdir auth resolution — RESOLVED (2026-03-22)**
 
-Goal: Verify that the harness resolves auth from `$HOME` (stable)
-rather than from cwd (changes per task).
+Investigation of vf-agents credential handling confirms:
 
-Questions to answer:
-1. Does Claude Code read credentials from `~/.claude/` regardless of cwd?
-2. Does changing cwd between invocations break auth?
-3. Are there any cwd-relative config lookups that would fail?
+1. Claude Code CLI resolves credentials from `$HOME/.claude/`
+   (hardcoded, no env var override like `CLAUDE_CONFIG_DIR`)
+2. Changing cwd between invocations has zero effect on auth
+3. No cwd-relative config lookups exist — all credential paths
+   are anchored to `$HOME`
 
-Method: Run Claude Code with credentials staged at `~/.claude/`.
-Invoke once with cwd `/workdir/a/`, then again with cwd `/workdir/b/`.
-Verify both invocations authenticate successfully.
+The vf-agents container layout (`$HOME=/home/node`, workdir at
+`/workdir`) already proves this separation. Credentials are staged
+from the host into `$HOME/.claude/` at container start via pre-run
+hooks. The workdir is a completely independent mount.
+
+**Implication for vafi:** The controller can invoke the harness with
+different cwds per task (`/sessions/<ms>/<task>/`) and auth works
+without any special handling. Credentials are staged once at pod
+start and remain valid for all task executions in that pod's lifetime.
 
 ### Implementation roadmap
 
