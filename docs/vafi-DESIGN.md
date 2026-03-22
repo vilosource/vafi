@@ -1572,6 +1572,238 @@ Summary of all gaps identified in the interface contract.
 
 ---
 
+## vafi-side Interface
+
+The controller consumes the vtf API through a layered interface:
+`WorkSource` (abstract) → `VtfWorkSource` (vtf-specific) → `VtfClient`
+(HTTP). This separation means the controller knows nothing about vtf
+endpoints — it calls the `WorkSource` interface. A different work
+source (queue, manual) can be swapped in without changing controller
+logic.
+
+### VtfClient — HTTP client for vtf REST API
+
+Thin wrapper over vtf endpoints. Handles auth headers, JSON
+serialization, error mapping, and pagination. One method per API call.
+
+```python
+class VtfClient:
+    def __init__(self, base_url: str, token: str | None = None): ...
+
+    # Agent registration
+    async def register_agent(self, name: str, tags: list[str]) -> dict
+
+    # Polling
+    async def list_claimable(self, tags: list[str], agent_id: str) -> list[dict]
+    async def list_tasks(self, status: str, assigned_to: str | None = None,
+                         expand: list[str] | None = None) -> list[dict]
+
+    # Task lifecycle
+    async def claim_task(self, task_id: str, agent_id: str, tags: list[str]) -> dict
+    async def heartbeat(self, task_id: str) -> None
+    async def complete_task(self, task_id: str) -> None
+    async def fail_task(self, task_id: str) -> None
+    async def submit_task(self, task_id: str) -> None
+
+    # Project
+    async def get_project(self, project_id: str) -> dict
+
+    # Notes
+    async def add_note(self, task_id: str, text: str, actor_id: str) -> dict
+    async def list_notes(self, task_id: str) -> list[dict]
+
+    # Reviews
+    async def submit_review(self, task_id: str, decision: str,
+                            reason: str, reviewer_id: str) -> dict
+
+    # Detail
+    async def get_task(self, task_id: str, expand: list[str] | None = None) -> dict
+```
+
+### Data types — shared across the interface
+
+```python
+@dataclass
+class AgentInfo:
+    id: str
+    token: str
+
+@dataclass
+class RepoInfo:
+    url: str          # git clone URL
+    branch: str       # default branch
+
+@dataclass
+class TaskInfo:
+    id: str
+    title: str
+    spec: str         # YAML spec content
+    project_id: str
+    test_command: dict
+    needs_review: bool
+    assigned_to: str | None
+
+@dataclass
+class ReworkContext:
+    session_id: str | None     # from previous execution, for --resume
+    judge_feedback: str        # latest review with changes_requested
+    attempt_number: int        # how many times rejected so far
+
+@dataclass
+class GateResult:
+    name: str
+    command: str
+    exit_code: int
+    stdout: str
+    passed: bool
+
+@dataclass
+class ExecutionResult:
+    success: bool              # all gates passed
+    session_id: str | None     # harness session ID for future rework
+    completion_report: str     # harness result text (opaque to controller)
+    cost_usd: float
+    num_turns: int
+    gate_results: list[GateResult]
+```
+
+### WorkSource — abstract interface
+
+The controller's only dependency. Defines what the controller can do
+with the work system, without knowing how.
+
+```python
+class WorkSource(Protocol):
+    """Abstract interface to a work system."""
+
+    # Registration
+    async def register(self, name: str, tags: list[str]) -> AgentInfo
+
+    # Polling — returns highest priority available task, or None
+    async def poll(self, agent_id: str, tags: list[str]) -> TaskInfo | None
+
+    # Task lifecycle
+    async def claim(self, task_id: str, agent_id: str) -> TaskInfo
+    async def heartbeat(self, task_id: str) -> None
+    async def complete(self, task_id: str, result: ExecutionResult) -> None
+    async def fail(self, task_id: str, reason: str) -> None
+
+    # Supervisor
+    async def submit(self, task_id: str) -> None
+    async def list_submittable(self) -> list[TaskInfo]
+
+    # Judge
+    async def submit_review(self, task_id: str, decision: str,
+                            reason: str, reviewer_id: str) -> None
+
+    # Context for execution
+    async def get_repo_info(self, project_id: str) -> RepoInfo
+    async def get_rework_context(self, task_id: str) -> ReworkContext
+    async def count_rework_attempts(self, task_id: str) -> int
+```
+
+### VtfWorkSource — vtf implementation
+
+Implements `WorkSource` using `VtfClient`. This is where vtf-specific
+logic lives: priority ordering (rework before new work), review
+parsing, session ID extraction from notes, dependency checking for
+the supervisor.
+
+```python
+class VtfWorkSource:
+    """WorkSource backed by the vtf REST API."""
+
+    def __init__(self, client: VtfClient): ...
+
+    async def register(self, name, tags) -> AgentInfo:
+        # POST /v1/agents/ — store token for future calls
+        ...
+
+    async def poll(self, agent_id, tags) -> TaskInfo | None:
+        # Priority 1: GET /v1/tasks/?status=changes_requested&assigned_to=me
+        # Priority 2: GET /v1/tasks/claimable/?tags=...&agent_id=...
+        # Return first match or None
+        ...
+
+    async def claim(self, task_id, agent_id) -> TaskInfo:
+        # POST /v1/tasks/{id}/claim/
+        ...
+
+    async def heartbeat(self, task_id) -> None:
+        # POST /v1/tasks/{id}/heartbeat/
+        ...
+
+    async def complete(self, task_id, result: ExecutionResult) -> None:
+        # 1. POST /v1/tasks/{id}/notes/ — completion report
+        # 2. POST /v1/tasks/{id}/notes/ — session_id (for rework)
+        # 3. POST /v1/tasks/{id}/complete/
+        ...
+
+    async def fail(self, task_id, reason: str) -> None:
+        # 1. POST /v1/tasks/{id}/notes/ — failure reason
+        # 2. POST /v1/tasks/{id}/fail/
+        ...
+
+    async def submit(self, task_id) -> None:
+        # POST /v1/tasks/{id}/submit/
+        ...
+
+    async def list_submittable(self) -> list[TaskInfo]:
+        # GET /v1/tasks/?status=draft&expand=links
+        # Filter client-side: only tasks with all depends_on targets done
+        ...
+
+    async def submit_review(self, task_id, decision, reason, reviewer_id):
+        # POST /v1/tasks/{id}/reviews/
+        ...
+
+    async def get_repo_info(self, project_id) -> RepoInfo:
+        # GET /v1/projects/{id}/ → extract repo_url, default_branch
+        ...
+
+    async def get_rework_context(self, task_id) -> ReworkContext:
+        # GET /v1/tasks/{id}/?expand=reviews
+        # GET /v1/tasks/{id}/notes/ → scan for session_id
+        # Count changes_requested reviews for attempt_number
+        ...
+
+    async def count_rework_attempts(self, task_id) -> int:
+        # GET /v1/tasks/{id}/?expand=reviews
+        # Count reviews where decision == "changes_requested"
+        ...
+```
+
+### How the controller uses the interface
+
+The controller never imports `VtfClient` or `VtfWorkSource` directly.
+It receives a `WorkSource` at init:
+
+```python
+class Controller:
+    def __init__(self, work_source: WorkSource, config: AgentConfig): ...
+
+    async def run(self):
+        agent = await self.work_source.register(self.config.name, self.config.tags)
+        while True:
+            task = await self.work_source.poll(agent.id, self.config.tags)
+            if task is None:
+                await asyncio.sleep(self.config.poll_interval)
+                continue
+            await self.execute(task, agent)
+
+    async def execute(self, task: TaskInfo, agent: AgentInfo):
+        claimed = await self.work_source.claim(task.id, agent.id)
+        repo = await self.work_source.get_repo_info(claimed.project_id)
+        # ... clone, build prompt, invoke harness, run gates ...
+        # ... complete or fail based on results ...
+```
+
+This is the complete interface that vafi develops against. The vtf
+contract (previous section) defines what's on the other side of the
+wire. The `WorkSource` interface is the seam between them.
+
+---
+
 ## Next Steps
 
 ### Dependencies
