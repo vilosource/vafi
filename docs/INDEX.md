@@ -13,6 +13,12 @@
 |----------|-------------|--------|
 | [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md) | API contract between vtf and vafi — 14 interaction points with request/response examples, 5 vtf gaps (GAP-1 through GAP-5), vafi-side interface design (WorkSource protocol, VtfClient, VtfWorkSource), shared data types | Draft |
 
+## Planning
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| [vafi-project-PLAN.md](vafi-project-PLAN.md) | Project plan — milestones M0-M4, dependencies, vtf GAP work (parallel stream), open decisions (K8s cluster type, registry, first target project) | Draft |
+
 ## How to read these docs
 
 1. Start with **controller-DESIGN.md** for the problem statement and what the simulation proved

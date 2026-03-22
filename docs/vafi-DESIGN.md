@@ -1341,12 +1341,5 @@ start and remain valid for all task executions in that pod's lifetime.
 
 ### Implementation roadmap
 
-Once dependencies and spikes are resolved:
-
-1. **K8s cluster** — provision and configure
-2. **vtf interface changes** — GAP-1 through GAP-5
-3. **Controller** — Python asyncio controller (the core of vafi)
-4. **Agent image** — `vafi-agent` with controller, methodologies, templates
-5. **Agent manifests** — k8s Deployments for executor, judge, supervisor pools
-6. **First project environment** — vtf dogfood as a k8s namespace
-7. **End-to-end test** — executor picks up a task, clones, executes, gates, reports
+See [vafi-project-PLAN.md](vafi-project-PLAN.md) for the full milestone
+plan (M0-M4), dependencies, vtf GAP work stream, and open decisions.
