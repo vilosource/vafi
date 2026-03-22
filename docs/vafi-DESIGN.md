@@ -1238,6 +1238,340 @@ A Python project's tasks require tag `python`, routed to the
 
 ---
 
+## vtf ↔ vafi Interface Contract
+
+This is the API contract between vtf and vafi. vafi can be developed
+in isolation against this contract. Changes needed in vtf are identified
+as gaps at the end.
+
+### 1. Agent Registration (controller startup)
+
+```
+POST /v1/agents/
+{
+  "name": "executor-1",
+  "tags": ["executor", "claude"]
+}
+→ 201 Created
+{
+  "id": "agent_xyz",
+  "name": "executor-1",
+  "tags": ["executor", "claude"],
+  "status": "online",
+  "token": "auth_token_here"
+}
+```
+
+The controller stores the token and uses it for all subsequent calls:
+```
+Authorization: Token {token}
+```
+
+**GAP-1:** Registration is not idempotent. If the controller restarts
+and POSTs the same agent name, it creates a duplicate. Needs upsert
+behavior — create if new, update tags/status if exists.
+
+### 2. Poll for Work (controller loop)
+
+**Priority 1 — Rework assigned to me:**
+```
+GET /v1/tasks/?status=changes_requested&assigned_to={agent_id}&expand=reviews
+→ 200 OK
+{
+  "results": [
+    {
+      "id": "task_abc",
+      "title": "...",
+      "spec": "...",
+      "project": "project_xyz",
+      "reviews": [
+        {
+          "decision": "changes_requested",
+          "reason": "Missing test for edge case...",
+          "reviewer_id": "judge-1"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `expand=reviews` gives the judge feedback needed for the rework
+prompt. The controller reads the latest `changes_requested` review
+to build the rework prompt.
+
+**Priority 2 — New claimable work:**
+```
+GET /v1/tasks/claimable/?tags=executor,claude&agent_id={agent_id}
+→ 200 OK
+{
+  "results": [
+    {
+      "id": "task_def",
+      "title": "...",
+      "spec": "...",
+      "project": "project_xyz",
+      "needs_review_on_completion": true
+    }
+  ]
+}
+```
+
+Returns `todo` tasks where: all dependencies met, task requires tags
+are a subset of the agent's tags, and task is unassigned or assigned
+to this agent.
+
+### 3. Get Project Metadata (for repo clone)
+
+```
+GET /v1/projects/{project_id}/
+→ 200 OK
+{
+  "id": "project_xyz",
+  "name": "vtaskforge",
+  "repo_url": "git@gitlab:vilosource/vtaskforge.git",
+  "default_branch": "develop",
+  ...
+}
+```
+
+The controller uses `repo_url` and `default_branch` to clone the repo
+into the task workdir.
+
+**Note:** `repo_url` and `default_branch` already exist on the vtf
+project model. No schema change needed.
+
+**GAP-2:** The task response includes `project` as just an ID string.
+The controller must make a separate call to get the repo URL. This
+should be optimized — either expand project inline on the task response
+(`?expand=project`) or include `repo_url` and `default_branch` directly
+in the claimable response.
+
+### 4. Claim Task
+
+```
+POST /v1/tasks/{task_id}/claim/
+{
+  "agent_id": "executor-1",
+  "tags": ["executor", "claude"]
+}
+→ 200 OK (task with claimed_by, claimed_at, claim_expires_at set)
+```
+
+Atomic with `select_for_update()` — race-safe for concurrent executors.
+
+**Validation enforced by vtf:**
+- Task must be in `todo` status (409 if already claimed)
+- Agent must exist (404 if not registered)
+- `task.requires` must be subset of agent tags (422 if not)
+- All `depends_on` links must target `done` tasks (422 if not)
+- If `task.assigned_to` is set, must match agent_id (403 if not)
+
+### 5. Heartbeat (during execution)
+
+```
+POST /v1/tasks/{task_id}/heartbeat/
+→ 200 OK
+```
+
+Extends `claim_expires_at` by `claim_timeout` (default 30 minutes).
+Only valid for tasks in `doing` status.
+
+The controller runs this as an async coroutine alongside harness
+execution, firing every `claim_timeout / 2` to keep the claim alive.
+
+### 6. Store Results (after harness completes)
+
+**Completion report (executor):**
+```
+POST /v1/tasks/{task_id}/notes/
+{
+  "text": "## Task abc — Widget API: Complete\n\nFiles created: ...\nTest results: 8/8 passed\n...",
+  "actor_id": "executor-1"
+}
+→ 201 Created
+```
+
+**Session ID for rework resumption:**
+```
+POST /v1/tasks/{task_id}/notes/
+{
+  "text": "vafi:session_id=session_abc123",
+  "actor_id": "executor-1"
+}
+→ 201 Created
+```
+
+**GAP-3:** Using notes for structured data (session_id, cost, turn
+count) is a workaround. A `metadata` JSON field on the task model
+would be cleaner — the controller PATCHes it with execution data:
+```
+PATCH /v1/tasks/{task_id}/
+{
+  "metadata": {
+    "session_id": "session_abc123",
+    "cost_usd": 0.042,
+    "num_turns": 12,
+    "completion_report": "..."
+  }
+}
+```
+
+### 7. Complete Task
+
+```
+POST /v1/tasks/{task_id}/complete/
+→ 200 OK
+```
+
+If `needs_review_on_completion=true`:
+  task → `pending_completion_review` (judge picks it up)
+If false:
+  task → `done`
+
+### 8. Fail Task
+
+```
+POST /v1/tasks/{task_id}/fail/
+→ 200 OK
+```
+
+Task → `needs_attention`. Human triage required.
+
+The failure reason should be stored as a note (or in metadata) before
+calling fail, so the human triaging has context.
+
+### 9. Judge Poll for Reviews
+
+```
+GET /v1/tasks/?status=pending_completion_review&expand=reviews,links
+```
+
+The judge controller filters for tasks matching its tags. The task
+spec + links give the judge everything it needs: what was requested
+(spec), what changed (executor's completion report in notes), and
+what to compare against (design docs via links).
+
+### 10. Judge Submit Review
+
+```
+POST /v1/tasks/{task_id}/reviews/
+{
+  "decision": "approved",
+  "reason": "Implementation matches spec. Tests pass. No architectural issues.",
+  "reviewer_id": "judge-1",
+  "reviewer_type": "agent"
+}
+→ 201 Created
+```
+
+If `decision == "approved"`:
+  `pending_completion_review` → `done`
+
+If `decision == "changes_requested"`:
+  `pending_completion_review` → `changes_requested`
+  `review_return_to` set automatically to `pending_completion_review`
+
+### 11. Executor Rework (changes_requested → doing)
+
+When the executor picks up a `changes_requested` task (from poll
+step 2, priority 1):
+
+```
+POST /v1/tasks/{task_id}/claim/
+{
+  "agent_id": "executor-1",
+  "tags": ["executor", "claude"]
+}
+```
+
+**GAP-4:** The state machine does not allow `changes_requested → doing`.
+Current valid transitions from `changes_requested` are:
+`pending_start_review`, `pending_completion_review`, `draft`,
+`cancelled`, `deferred`.
+
+Required change: add `doing` to valid transitions from
+`changes_requested`. The claim endpoint should handle this transition
+when the task is in `changes_requested` status.
+
+After rework completes, the executor calls complete, which goes back
+to `pending_completion_review` (via `review_return_to`).
+
+### 12. Rework Attempt Counting
+
+The controller counts rework attempts by querying reviews:
+```
+GET /v1/tasks/{task_id}/?expand=reviews
+```
+
+Count reviews where `decision == "changes_requested"`. If count >=
+`VF_MAX_REWORK` (default 3), the controller calls fail instead of
+attempting another rework.
+
+No vtf change needed — the data is already there.
+
+### 13. Supervisor: Submit Unblocked Tasks
+
+The supervisor polls for draft tasks whose dependencies are all met:
+
+```
+GET /v1/tasks/?status=draft&expand=links
+```
+
+For each task, the supervisor checks if all `depends_on` link targets
+are in `done` status. If so:
+
+```
+POST /v1/tasks/{task_id}/submit/
+```
+
+If `needs_review_before_start=true` → `pending_start_review`
+If false → `todo` (claimable by executors)
+
+**GAP-5:** This requires the supervisor to fetch all draft tasks and
+check dependencies client-side. A server-side endpoint that returns
+"draft tasks with all dependencies met" would be more efficient,
+similar to the `claimable` endpoint for `todo` tasks.
+
+### 14. Session ID Retrieval (for rework resumption)
+
+When picking up rework, the controller needs the session ID from the
+previous execution:
+
+```
+GET /v1/tasks/{task_id}/notes/
+→ scan for note with "vafi:session_id=" prefix
+```
+
+Or with the metadata field (GAP-3):
+```
+GET /v1/tasks/{task_id}/
+→ read metadata.session_id
+```
+
+---
+
+## vtf Changes Required
+
+Summary of all gaps identified in the interface contract.
+
+| # | Change | Severity | Description |
+|---|--------|----------|-------------|
+| GAP-1 | Agent registration upsert | **Blocks restart** | POST /v1/agents/ should upsert by name — create if new, update if exists. Currently creates duplicates. |
+| GAP-2 | Task response project expansion | **Performance** | Add `?expand=project` support on task endpoints, or include `repo_url` and `default_branch` in claimable response. Saves one API call per task claim. |
+| GAP-3 | Task metadata field | **Blocks session resume** | Add `metadata` JSON field on task model for structured execution data (session_id, cost, turns, completion report). Using notes for structured data is fragile. |
+| GAP-4 | State machine: changes_requested → doing | **Blocks rework** | Add `doing` to valid transitions from `changes_requested`. One-line change in `state_machine.py`. The claim endpoint should handle this transition. |
+| GAP-5 | Submittable tasks endpoint | **Supervisor efficiency** | Add endpoint or query param to find draft tasks with all dependencies met (analogous to `claimable` for todo tasks). Without this, supervisor must check deps client-side. |
+
+**Priority order for implementation:**
+1. GAP-4 (state machine) — one-line change, blocks the entire rework cycle
+2. GAP-1 (agent upsert) — blocks controller restarts
+3. GAP-3 (metadata field) — blocks session resumption for rework
+4. GAP-2 (project expansion) — optimization, can work around with extra call
+5. GAP-5 (submittable endpoint) — optimization, supervisor can check client-side
+
+---
+
 ## Next Steps
 
 ### Dependencies
@@ -1255,10 +1589,10 @@ This is a separate design and implementation effort covering:
 This should be designed in the vafi workspace as its own effort before
 controller implementation begins.
 
-**vtf project model changes** — vtf needs `repo_url` and
-`default_branch` fields on the project model. The task claim response
-must include project metadata. This is a small vtf change but blocks
-vafi from being project-agnostic.
+**vtf interface changes** — the 5 gaps identified in the interface
+contract above. These are vtf code changes that should be implemented
+in the vtaskforge project. Priority: GAP-4 → GAP-1 → GAP-3 → GAP-2
+→ GAP-5.
 
 ### Spikes
 
@@ -1302,7 +1636,7 @@ Verify both invocations authenticate successfully.
 Once dependencies and spikes are resolved:
 
 1. **K8s cluster** — provision and configure
-2. **vtf changes** — add `repo_url`, `default_branch` to project model
+2. **vtf interface changes** — GAP-1 through GAP-5
 3. **Controller** — Python asyncio controller (the core of vafi)
 4. **Agent image** — `vtf-vff-agent` with controller, methodologies, templates
 5. **Agent manifests** — k8s Deployments for executor, judge, supervisor pools
