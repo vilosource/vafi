@@ -243,6 +243,23 @@ class VtfClient:
 
         return response.json()
 
+    async def list_notes(self, task_id: str) -> list[dict[str, Any]]:
+        """List notes for a task.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            List of note data
+        """
+        url = f"{self.base_url}/v1/tasks/{task_id}/notes/"
+
+        response = await self._client.get(url, headers=self._headers())
+        self._handle_error(response)
+
+        data = response.json()
+        return data.get("results", [])
+
     async def get_task(self, task_id: str, expand: list[str] | None = None) -> dict[str, Any]:
         """Get task details.
 
