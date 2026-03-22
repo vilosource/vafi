@@ -187,15 +187,25 @@ class HarnessInvoker:
                 *cmd,
                 cwd=str(workdir),
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                text=True
+                stderr=asyncio.subprocess.PIPE
             )
 
             # Wait with timeout
-            stdout, stderr = await asyncio.wait_for(
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 process.communicate(),
                 timeout=self.config.task_timeout
             )
+
+            # Handle both bytes (real subprocess) and strings (mocked subprocess)
+            if isinstance(stdout_bytes, bytes):
+                stdout = stdout_bytes.decode('utf-8') if stdout_bytes else ''
+            else:
+                stdout = stdout_bytes or ''
+
+            if isinstance(stderr_bytes, bytes):
+                stderr = stderr_bytes.decode('utf-8') if stderr_bytes else ''
+            else:
+                stderr = stderr_bytes or ''
 
             # Create CompletedProcess-like object
             result = subprocess.CompletedProcess(

@@ -116,7 +116,7 @@ class Controller:
 
             # Report result
             if result.success:
-                await self.work_source.complete(task.id)
+                await self.work_source.complete(task.id, result)
                 logger.info(f"Completed task {task.id}")
             else:
                 await self.work_source.fail(task.id, result.completion_report)
