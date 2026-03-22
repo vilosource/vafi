@@ -54,10 +54,17 @@ Your LAN
 - [ ] Verify `kubectl get nodes` works from dev laptop
 
 **Cluster configuration:**
-- [ ] Networking: vtf API reachable from agent pods, git server (GitLab) reachable
+- [ ] Namespaces: `vafi-system`, `vafi-agents`
 - [ ] Storage: PersistentVolume for `/sessions/` (k3s local-path-provisioner works out of the box)
 - [ ] Secrets: Claude Code credentials (`~/.claude/`), SSH keys for git, vtf API token
-- [ ] Namespaces: `vafi-system`, `vafi-agents`
+- [ ] Networking: git server (GitLab) reachable from agent pods
+
+**vtf dogfood in-cluster (`vafi-system` namespace):**
+- [ ] K8s manifests for vtf stack: Postgres (StatefulSet), Redis (Deployment), API (Deployment), Web SPA (Deployment)
+- [ ] vtf database migration job
+- [ ] vtf service: `vtf-api.vafi-system.svc.cluster.local:8001`
+- [ ] Seed admin user (admin/admin)
+- [ ] Verify vtf API accessible from `vafi-agents` namespace
 
 ### Container images
 
@@ -83,7 +90,7 @@ just proof the platform works.
 | Decision | Options | Notes |
 |----------|---------|-------|
 | ~~Laptop specs~~ | 32 GB RAM, 24 cores | Decided — no hardware constraints |
-| vtf deployment | In-cluster (vafi-system namespace) vs external | Dogfood instance currently runs on dev laptop at localhost:8001 |
+| ~~vtf deployment~~ | In-cluster (`vafi-system` namespace) | Decided — dogfood moves to k8s, agents reach it via k8s DNS |
 | Container registry | Deferred — SSH import for dev, GHCR or ACR for prod | Not needed until CI/CD or multi-node |
 
 ---
