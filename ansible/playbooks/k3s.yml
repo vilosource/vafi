@@ -2,10 +2,10 @@
 # k3s install and configuration only
 #
 # Usage:
-#   ansible-playbook playbooks/k3s.yml -i inventory/dev.yml
+#   cd ansible && ansible-playbook playbooks/k3s.yml -i inventory/dev.yml
 
 - name: Install and configure k3s
   hosts: k3s
   become: true
   roles:
-    - k3s
+    - role: ../roles/k3s

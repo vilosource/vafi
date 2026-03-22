@@ -2,16 +2,16 @@
 # Master playbook — provisions the full server
 #
 # Usage:
-#   ansible-playbook playbooks/site.yml -i inventory/dev.yml
+#   cd ansible && ansible-playbook playbooks/site.yml -i inventory/dev.yml
 
 - name: Base OS configuration
   hosts: k3s
   become: true
   roles:
-    - common
+    - role: ../roles/common
 
 - name: Install and configure k3s
   hosts: k3s
   become: true
   roles:
-    - k3s
+    - role: ../roles/k3s
