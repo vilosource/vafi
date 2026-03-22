@@ -184,13 +184,18 @@ The job payload (from the server) contains everything: repo URL, commit
 ref, container image, environment variables, scripts to run. The runner
 is generic infrastructure.
 
-**Implication for us:** The vtf task (via its project/milestone) should
-carry the repo URL and optionally an image override. The controller does
-not need hardcoded project knowledge. A single executor container can
-serve multiple projects because each task tells it where the code is.
+**Implication for us:** vtf stores project execution metadata (repo URL,
+default branch) on the project model. When vafi claims a task, the
+response includes the project context — repo URL, branch, spec,
+everything needed to execute. vafi is completely generic — no
+project-specific config, no project mappings. A single executor
+container can serve any project because every task carries its full
+execution context.
 
-This means vtf needs `repo_url` on the project model. When the controller
-claims a task, it resolves the repo URL from the task's project metadata.
+This follows the GitLab model where the server is the single source of
+truth for project knowledge. vtf is not a git server, but it stores
+the repo URL as project metadata, just as any project management tool
+links to a repo.
 
 **2. Image selection happens at the job level.**
 
@@ -468,21 +473,22 @@ required.
 
 ```
 +----------------------------------------------------------+
-|  Layer 4: Fleet Manager (vafi)                       |
+|  Layer 4: Kubernetes Orchestration                        |
 |                                                           |
-|  Reads agent configs, launches containers, scales pool.   |
-|  v1: generates docker-compose.yml from agent configs      |
-|  Future: k8s operator, direct Docker API, auto-scaling    |
+|  Manages all vafi resources as k8s objects:                |
+|  - Agent pools as Deployments (executor, judge, super)    |
+|  - Project environments as Namespaces + Deployments       |
+|  - Session storage as PersistentVolumes                   |
+|  - Secrets as k8s Secrets                                 |
+|  - Scaling via replicas or HPA                            |
 |                                                           |
-|  vafi apply agents/     <- reconcile desired state   |
-|  vafi status            <- show running agents       |
-|  vafi scale executor=3  <- adjust pool               |
-|  vafi logs executor-1   <- stream controller logs    |
-|  vafi stop              <- graceful shutdown          |
+|  kubectl scale deploy executor-pool -n vafi-agents --replicas=5
+|  kubectl logs -f deploy/executor-pool -n vafi-agents      |
+|  kubectl apply -f projects/vta/ -n vafi-project-vta       |
 +----------------------------+-----------------------------+
-                             | launches N containers
+                             | manages pods
 +----------------------------v-----------------------------+
-|  Layer 3: Controller (Python, inside container)           |
+|  Layer 3: Controller (Python, inside pod)                 |
 |                                                           |
 |  The autonomous loop:                                     |
 |  1. Init: register with work source, stage methodology    |
@@ -532,11 +538,12 @@ execute, verify, report. It knows about work sources and gates but not
 about specific AI tools — it invokes the harness as a subprocess using
 the adapter's command format.
 
-**Layer 4 (Fleet Manager)** is new. The `vafi` command group reads
-agent configs and manages container lifecycle. For v1, it generates a
-`docker-compose.yml` from agent configs and delegates to `docker compose`.
-The agent config is the source of truth; compose is the deployment
-mechanism.
+**Layer 4 (Kubernetes Orchestration)** manages all vafi resources as
+native k8s objects. Agent pools are Deployments, project environments
+are Namespaces with their own Deployments/StatefulSets, session storage
+is PersistentVolumes, and secrets are k8s Secrets. Scaling, health
+checks, rolling updates, and restart policies are all handled by k8s
+natively.
 
 ### Work source abstraction
 
@@ -567,6 +574,50 @@ WorkSource
 
 The controller does not know which work source it uses. It calls the
 interface. This makes the controller reusable beyond vtf.
+
+### Kubernetes topology
+
+```
+Namespace: vafi-system
+  vtf API (Deployment)               <- task tracker
+  supervisor (Deployment, replicas=1) <- DAG management
+
+Namespace: vafi-agents
+  executor-pool (Deployment, replicas=3)  <- AI agent workers
+  judge-pool (Deployment, replicas=1)     <- review agents
+  sessions-pv (PersistentVolume)          <- shared workdirs
+
+Namespace: vafi-project-vta              <- todo app environment
+  postgres (StatefulSet)
+  redis (Deployment)
+  app (Deployment)
+
+Namespace: vafi-project-vtf              <- vtaskforge environment
+  postgres (StatefulSet)
+  redis (Deployment)
+  api (Deployment)
+  web (Deployment)
+```
+
+**Agent pools** are Deployments in `vafi-agents`. Scaling is
+`kubectl scale` or HPA based on vtf queue depth. Each pod runs the
+controller loop — one pod = one agent.
+
+**Project environments** are namespaces with their own infrastructure.
+Each project gets a namespace (e.g., `vafi-project-vta`) containing
+the services it needs. Executors access project services via k8s DNS
+(e.g., `postgres.vafi-project-vta.svc.cluster.local`).
+
+**Environment lifecycle:**
+- **Milestone 1** of any project creates the environment (executor
+  writes k8s manifests, applies them to the project namespace)
+- **Subsequent milestones** evolve the environment (executor updates
+  manifests — adds Redis, Celery workers, etc.)
+- **Project completion** — namespace can be torn down
+
+The environment is a **living artifact** that co-evolves with the
+codebase. Tasks that add infrastructure dependencies update the k8s
+manifests in the repo and apply them as part of task execution.
 
 ### Gate execution
 
@@ -867,10 +918,10 @@ VF_TASK_TIMEOUT=600              # per-task timeout in seconds
 VF_MAX_REWORK=3                  # max rework attempts before escalation
 VF_MAX_TURNS=50                  # max harness turns per invocation
 
-# Repo (not hardcoded — resolved per task from vtf project metadata)
-# VF_REPO_URL and VF_REPO_BRANCH come from the task's project in vtf,
-# not from env vars. The controller queries vtf for project details
-# when it claims a task. This enables multi-project execution.
+# Repo (resolved per task from vtf project metadata)
+# When the controller claims a task, the vtf response includes the
+# project's repo_url and default_branch. No project config in vafi —
+# vtf is the source of truth. Enables multi-project execution.
 ```
 
 **Filesystem conventions:**
@@ -883,71 +934,115 @@ VF_MAX_TURNS=50                  # max harness turns per invocation
 | `/sessions/` | Per-task workdirs (repo + sessions) | Shared RW volume |
 | `/home/node/.claude/` | Harness config (credentials + methodology) | tmpfs |
 
-### vafi orchestrator: `vafi`
+### Kubernetes deployment
 
-New command group for managing autonomous agent containers.
+Agent configs translate to k8s manifests. The agent config YAML is the
+source of truth; k8s manifests are generated or hand-written from it.
 
-```bash
-vafi apply agents/            # read agent configs, reconcile containers
-vafi status                   # show running agents + current task
-vafi scale executor=3         # adjust replica count
-vafi logs executor-1          # stream controller logs
-vafi stop                     # graceful shutdown (finish current tasks)
-vafi destroy                  # force stop all containers
-```
-
-**v1 implementation:** `vafi apply` reads agent config YAML files,
-generates a `docker-compose.yml`, and runs `docker compose up -d`. The
-agent config is the source of truth. The compose file is a generated
-artifact, not hand-written.
-
-**Generated compose example:**
+**Agent pool deployment example:**
 
 ```yaml
-# Generated by vafi apply — do not edit
-services:
-  executor-1:
-    image: vtf-vff-agent:latest
-    environment:
-      VF_AGENT_ID: executor-1
-      VF_AGENT_ROLE: executor
-      VF_AGENT_TAGS: executor,claude
-      VF_WORK_SOURCE: vtf
-      VF_VTF_API_URL: http://vtf:8001
-      VF_POLL_INTERVAL: "30"
-      VF_TASK_TIMEOUT: "600"
-      VF_MAX_REWORK: "3"
-    volumes:
-      - sessions:/sessions
-      - /home/user/.claude:/tmp/vfa-config:ro
-    deploy:
-      resources:
-        limits:
-          memory: 4g
-          cpus: "2"
-    restart: unless-stopped
-
-  judge-1:
-    image: vtf-vff-agent:latest
-    environment:
-      VF_AGENT_ID: judge-1
-      VF_AGENT_ROLE: judge
-      VF_AGENT_TAGS: judge,claude
-      VF_WORK_SOURCE: vtf
-      VF_VTF_API_URL: http://vtf:8001
-    volumes:
-      - sessions:/sessions
-      - /home/user/.claude:/tmp/vfa-config:ro
-    deploy:
-      resources:
-        limits:
-          memory: 4g
-          cpus: "2"
-    restart: unless-stopped
-
-volumes:
-  sessions:
+# k8s/agents/executor-pool.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor-pool
+  namespace: vafi-agents
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vafi-agent
+      role: executor
+  template:
+    metadata:
+      labels:
+        app: vafi-agent
+        role: executor
+    spec:
+      containers:
+        - name: agent
+          image: vtf-vff-agent:latest
+          env:
+            - name: VF_AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name    # pod name = agent ID
+            - name: VF_AGENT_ROLE
+              value: executor
+            - name: VF_AGENT_TAGS
+              value: executor,claude
+            - name: VF_VTF_API_URL
+              value: http://vtf-api.vafi-system.svc.cluster.local:8001
+            - name: VF_POLL_INTERVAL
+              value: "30"
+            - name: VF_TASK_TIMEOUT
+              value: "600"
+            - name: VF_MAX_REWORK
+              value: "3"
+            - name: VF_MAX_TURNS
+              value: "50"
+          volumeMounts:
+            - name: sessions
+              mountPath: /sessions
+          resources:
+            limits:
+              memory: 4Gi
+              cpu: "2"
+      volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: vafi-sessions
 ```
+
+**Project environment example:**
+
+```yaml
+# k8s/projects/vta/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vafi-project-vta
+
+---
+# k8s/projects/vta/postgres.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: vafi-project-vta
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_DB
+              value: vta
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+```
+
+**Key k8s features used:**
+
+| Feature | Purpose |
+|---------|---------|
+| Pod name as agent ID | `metadata.name` → stable identity per pod |
+| DNS service discovery | Agents reach project services via `service.namespace.svc.cluster.local` |
+| PersistentVolumeClaim | Shared session storage across agent pods |
+| Namespaces | Isolation between projects and between agents/system |
+| Resource limits | Per-pod memory/CPU caps |
+| Secrets | Credentials per namespace (git SSH keys, API keys) |
+| Restart policy | Auto-restart failed agents |
+| Replicas | Scale agent pools |
 
 ### Relationship to vf-agents
 
@@ -985,81 +1080,161 @@ users but share infrastructure:
 
 The following gaps require decisions before implementation begins.
 
-### Gap 6: Supervisor role
+### Gap 6: Supervisor role — RESOLVED
 
-The supervisor manages board state — submitting tasks when DAG
-dependencies are met. It is separate from executors and judges.
+The supervisor is just another agent role, not a separate system. Same
+image, same controller loop, different behavior when work is found.
 
-**Open questions:**
-- Is the supervisor a separate container running its own controller?
-- Is it a vtf background job (Celery task)?
-- Is it a `vafi` sidecar?
-- Does it need an AI harness at all, or is it pure logic?
+| Role | Polls for | Action | Harness? |
+|------|-----------|--------|----------|
+| Executor | Claimable tasks | Invoke harness, run gates | Yes |
+| Judge | Tasks pending review | Invoke harness for review | Yes |
+| Supervisor | Completed tasks | Check DAG, submit unblocked tasks | No |
 
-### Gap 7: Registration and identity
+`VF_AGENT_ROLE=supervisor` — the controller skips harness invocation
+and instead runs pure logic: query which tasks have all dependencies
+met, transition them from `draft` to `todo` (making them claimable by
+executors).
 
-Executors and judges need unique identities for vtf agent registration.
+The supervisor is a vafi agent, not a vtf feature. It runs in the same
+fleet, managed the same way, with the same container lifecycle.
 
-**Open questions:**
-- Stable ID (`executor-{hostname}`) or ephemeral (UUID per container)?
-- Registration on startup — what happens on container restart?
-  Re-register or reuse existing?
-- How does the vtf agent registration API handle duplicate IDs?
-- GitLab Runner uses a registration token exchange — runner registers
-  once and receives a runner token for future communication. Should
-  we follow a similar pattern?
+### Gap 7: Registration and identity — RESOLVED
 
-### Gap 8: Resource controls
+Following the GitLab Runner model: stable IDs, idempotent registration.
 
-Per-task limits on harness invocation: max turns, timeout, cost cap.
+**Identity:** The orchestrator assigns a stable `VF_AGENT_ID` via env
+var (e.g., `executor-1`, `judge-1`, `supervisor-1`). The ID is stable
+across container restarts — same container name, same identity.
 
-**Open questions:**
-- Where do limits come from — agent config, task spec, or both?
-- Which takes precedence when task spec and agent config disagree?
-- How does the controller enforce max_turns (harness flag vs
-  output check)?
-- How does cost tracking work (harness reports cost in output)?
+**Registration:** On startup, the controller calls
+`POST /v1/agents/register` with its ID, role, and tags. vtf upserts —
+if the ID already exists, it updates the record (tags, status, last
+seen). This makes registration idempotent. Restarts just work.
 
-### Gap 9: Repo and workspace provisioning
+**No token exchange for v1.** vtf is internal infrastructure. The agent
+ID in the env var is sufficient identity. The controller uses it for
+all vtf communication (claim, heartbeat, report).
 
-How does the controller prepare the workspace for each task? Informed
-by GitLab Runner's helper container pattern.
+**Future (multi-tenant):** Add a registration token flow — admin
+generates a token in vtf, agent uses it to register, gets back a
+scoped API token for future communication. Same pattern as GitLab
+Runner's registration token exchange.
 
-**Open questions:**
-- Repo URL comes from vtf project metadata — does vtf need a
-  `repo_url` field on the project model?
-- Git clone strategy: fresh clone per task (clean, slow) or
-  fetch into cached clone (fast, risk of stale state)?
-- Git credentials: SSH keys mounted into container, or deploy
-  tokens injected per-task?
-- Branch selection: from task spec, milestone, or project default?
-- Shallow clone (`--depth 1`) for speed, or full history for
-  `git blame` / harness context?
+### Gap 8: Resource controls — RESOLVED
 
-### Gap 10: Docker access for gates
+Following the GitLab Runner model: admin sets ceilings, tasks operate
+within them. Tasks can request lower limits but never exceed the agent
+config.
 
-Executors run verification gates that may need Docker access
-(e.g., `docker compose exec api pytest`).
+**Limit hierarchy:**
 
-**Open questions:**
-- v1: Docker socket binding (`/var/run/docker.sock`) — acceptable
-  when we control all workloads?
-- How does the executor know which compose project to target?
-  Is the test stack already running, or does the executor start it?
-- Future: DinD sidecar for isolation when running untrusted tasks?
+| Limit | Set by | Overridable by task? | Enforcement |
+|-------|--------|---------------------|-------------|
+| `task_timeout` | Agent config | Yes, lower only | `subprocess.run(timeout=N)` — controller kills harness |
+| `max_turns` | Agent config | Yes, lower only | `claude --max-turns N` flag passed to harness |
+| `memory`, `cpus` | Orchestrator | No — Docker container limit | Docker resource constraints at container creation |
+| `cost` | Tracked, not enforced (v1) | N/A | Read `total_cost_usd` from harness JSON output, log it |
 
-### Gap 11: Image selection per task
+**Precedence:** `min(agent_config, task_spec)` — the more restrictive
+value wins. The agent config is the ceiling, the task spec can only
+tighten.
 
-GitLab lets each job specify its container image. Should vtf tasks
-(or projects) be able to override the executor's default image?
+**Example:** Agent config has `task_timeout: 600`, `max_turns: 50`.
+A simple task spec sets `timeout: 120`, `max_turns: 20`. The controller
+uses `timeout=120`, `max_turns=20`. A complex task spec sets
+`timeout: 900` — the controller caps it at `600` (agent ceiling).
 
-**Open questions:**
-- Where is the image override specified — project, milestone, or
-  task spec?
-- Does the controller need to support pulling and switching images
-  mid-lifecycle, or is image selection a vafi orchestrator concern
-  (one container = one image)?
-- How does this interact with the one-image-multiple-roles model?
+**Cost tracking (v1):** Read `total_cost_usd` from harness JSON output,
+store in vtf task metadata and controller logs. No enforcement — just
+visibility. Future: cost cap that terminates the harness mid-task when
+a budget is exceeded.
+
+### Gap 9: Repo and workspace provisioning — RESOLVED
+
+Following the GitLab Runner model: **vtf owns project knowledge, vafi
+owns execution knowledge.** vtf stores repo URL and default branch on
+the project model. When vafi claims a task, the task response includes
+the project context — everything needed to clone and execute.
+
+**Boundary between vtf and vafi:**
+
+| Concern | Owner | Rationale |
+|---------|-------|-----------|
+| Repo URL | vtf (project model) | Project metadata — same as any PM tool linking to a repo |
+| Default branch | vtf (project model) | Project-level setting |
+| Branch override | vtf (milestone, future) | Feature branch per milestone |
+| Task spec | vtf (task model) | Already exists |
+| Clone strategy | vafi (agent config) | Execution detail — how to clone, not what to clone |
+| Git credentials | vafi orchestrator (v1: mounted SSH keys) | Execution infrastructure |
+| Git credentials | vtf (future: scoped tokens per task) | Following GitLab CI_JOB_TOKEN pattern |
+
+**vtf project model changes required:**
+- Add `repo_url` field (e.g., `git@gitlab:group/vtaskforge.git`)
+- Add `default_branch` field (e.g., `develop`)
+- Task claim response should include project metadata so vafi
+  gets everything in one call
+
+vafi is completely generic — no project mappings, no project config
+files. Any executor can work on any project because the task carries
+its full execution context.
+
+**Clone strategy (v1): Fresh clone per task.**
+- `git clone --branch <branch> <url> /sessions/<milestone>/<task>/`
+- Guarantees clean state, no cross-task contamination
+- For rework: workdir already exists, skip clone, reuse
+- Future optimization: `fetch` strategy (reuse cached clone, `git clean`
+  + `git fetch`) for speed
+
+**Git credentials: SSH keys mounted into container.**
+- Orchestrator mounts keys at `/home/node/.ssh/` (same pattern as
+  current vf-agents)
+- Future: vtf-issued deploy tokens per task (GitLab CI_JOB_TOKEN pattern)
+
+**Branch selection:** From vafi project config `default_branch`. Future:
+milestone-level branch override for feature branches.
+
+**Full clone (v1).** The harness benefits from git history (`git blame`,
+`git log`). Shallow clone saves time but limits context. Optimize later
+if clone time becomes a bottleneck.
+
+### Gap 10: Docker access for gates — RESOLVED
+
+With k8s as the deployment target, the Docker socket problem goes away.
+
+Agents don't run `docker compose exec` — they interact with the project
+environment via k8s:
+- **Test commands** connect to project services via DNS
+  (e.g., `postgres.vafi-project-vta.svc.cluster.local`)
+- **Environment updates** use `kubectl apply` to evolve the project stack
+- **Ephemeral test infra** uses k8s Jobs with sidecar containers
+  (fresh postgres per task, auto-cleanup)
+
+No Docker socket binding. No DinD. The cluster provides the execution
+environment natively.
+
+### Gap 11: Image selection per task — RESOLVED
+
+With k8s, image selection is native. Agent pods use a default image
+from the Deployment spec, but tasks or projects can override it via
+pod template patches or separate Deployments per project type.
+
+k8s handles image pulling, caching, and version management. Different
+agent pools can use different images:
+
+```yaml
+# Python project agents
+executor-python:
+  image: vtf-vff-agent-python:latest
+
+# Node project agents
+executor-node:
+  image: vtf-vff-agent-node:latest
+```
+
+Tag-based routing (already in vtf) directs tasks to the right pool.
+A Python project's tasks require tag `python`, routed to the
+`executor-python` pool.
 
 ---
 
