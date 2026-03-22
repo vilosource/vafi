@@ -14,19 +14,12 @@ docker build \
     -t "${REGISTRY}/vafi-claude:latest" \
     "${REPO_ROOT}/images/claude"
 
-# vafi-agent requires controller source (M2)
-if [ -f "${REPO_ROOT}/images/agent/Dockerfile" ] && \
-   [ -d "${REPO_ROOT}/src/controller" ] && \
-   [ -f "${REPO_ROOT}/src/controller/__main__.py" ]; then
-    echo "==> Building vafi-agent"
-    docker build \
-        --build-arg "REGISTRY=${REGISTRY}" \
-        -t "${REGISTRY}/vafi-agent:latest" \
-        -f "${REPO_ROOT}/images/agent/Dockerfile" \
-        "${REPO_ROOT}"
-else
-    echo "==> Skipping vafi-agent (controller source not yet available)"
-fi
+echo "==> Building vafi-agent"
+docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    -t "${REGISTRY}/vafi-agent:latest" \
+    -f "${REPO_ROOT}/images/agent/Dockerfile" \
+    "${REPO_ROOT}"
 
 echo "==> Done"
 docker images | grep vafi

@@ -1,0 +1,114 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor-pool
+  namespace: vafi-agents
+  labels:
+    app.kubernetes.io/name: executor-pool
+    app.kubernetes.io/component: agent-pool
+    app.kubernetes.io/part-of: vafi
+    vafi.role: executor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: executor-pool
+      vafi.role: executor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: executor-pool
+        app.kubernetes.io/component: agent-pool
+        app.kubernetes.io/part-of: vafi
+        vafi.role: executor
+    spec:
+      containers:
+        - name: vafi-agent
+          image: 192.168.2.90:30500/vafi-agent:latest
+          imagePullPolicy: Always
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+          env:
+            # Agent identity
+            - name: VF_AGENT_ID
+              value: ""  # Auto-generated if empty
+            - name: VF_AGENT_ROLE
+              value: "executor"
+            - name: VF_AGENT_TAGS
+              value: "executor"
+
+            # vtf integration
+            - name: VF_VTF_API_URL
+              value: "http://vtf-api.vafi-system.svc.cluster.local:8000"
+            - name: VF_VTF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vafi-secrets
+                  key: VF_VTF_TOKEN
+
+            # Timing and limits
+            - name: VF_POLL_INTERVAL
+              value: "30"
+            - name: VF_TASK_TIMEOUT
+              value: "600"
+            - name: VF_MAX_REWORK
+              value: "3"
+            - name: VF_MAX_TURNS
+              value: "50"
+            - name: VF_HEARTBEAT_INTERVAL
+              value: "300"
+
+            # Sessions storage
+            - name: VF_SESSIONS_DIR
+              value: "/sessions"
+
+            # Claude API credentials
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vafi-secrets
+                  key: ANTHROPIC_API_KEY
+
+          volumeMounts:
+            - name: sessions
+              mountPath: /sessions
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+
+          # Health checks
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "pgrep -f 'python -m controller'"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "pgrep -f 'python -m controller'"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 2
+
+      volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: sessions-pvc
+
+      restartPolicy: Always
