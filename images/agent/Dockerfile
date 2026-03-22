@@ -1,8 +1,8 @@
 ARG REGISTRY=192.168.2.90:30500
 FROM ${REGISTRY}/vafi-claude:latest
 
-# Copy controller source code
-COPY src/controller/ /opt/vf-agent/controller/
+# Copy controller source code (pyproject.toml expects src/ layout)
+COPY src/ /opt/vf-agent/src/
 
 # Copy methodologies and templates
 COPY methodologies/ /opt/vf-agent/methodologies/
@@ -13,7 +13,7 @@ COPY pyproject.toml /opt/vf-agent/
 
 # Install the controller as a Python package
 USER root
-RUN pip install /opt/vf-agent/
+RUN pip install --break-system-packages /opt/vf-agent/
 USER agent
 
 # Copy entrypoint script
