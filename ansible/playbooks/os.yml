@@ -1,0 +1,11 @@
+---
+# OS configuration only — packages, hardening, timezone
+#
+# Usage:
+#   ansible-playbook playbooks/os.yml -i inventory/dev.yml
+
+- name: Base OS configuration
+  hosts: k3s
+  become: true
+  roles:
+    - common

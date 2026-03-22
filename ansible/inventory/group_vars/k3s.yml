@@ -1,0 +1,17 @@
+---
+# k3s configuration
+
+k3s_version: "v1.31.4+k3s1"
+
+# k3s server flags
+k3s_server_args: >-
+  --disable=traefik
+  --write-kubeconfig-mode=644
+
+# Where to fetch kubeconfig to on the control machine
+k3s_kubeconfig_local_path: "~/.kube/vafi-dev.yaml"
+
+# Namespaces to create after cluster is ready
+k3s_namespaces:
+  - vafi-system
+  - vafi-agents
