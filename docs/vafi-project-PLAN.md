@@ -82,7 +82,7 @@ just proof the platform works.
 
 | Decision | Options | Notes |
 |----------|---------|-------|
-| Laptop specs | Depends on what's available | Needs enough RAM for k3s + multiple agent pods |
+| ~~Laptop specs~~ | 32 GB RAM, 24 cores | Decided — no hardware constraints |
 | vtf deployment | In-cluster (vafi-system namespace) vs external | Dogfood instance currently runs on dev laptop at localhost:8001 |
 | Container registry | Deferred — SSH import for dev, GHCR or ACR for prod | Not needed until CI/CD or multi-node |
 
