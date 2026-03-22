@@ -1,16 +1,19 @@
 """vafi controller implementation.
 
 The Controller class implements the core poll-claim-execute loop for vafi agents.
-It polls for work, claims tasks, and logs what it would execute. This phase validates
-the poll/claim cycle works end-to-end without harness invocation.
+It polls for work, claims tasks, executes them via harness invocation, and reports results.
 """
 
 import asyncio
 import logging
 import signal
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import AgentConfig
+from .invoker import HarnessInvoker
+from .prompt import load_template, render_prompt
+from .types import ExecutionResult
 
 if TYPE_CHECKING:
     from .worksources.protocol import WorkSource
@@ -37,6 +40,7 @@ class Controller:
         self.config = config
         self._shutdown = asyncio.Event()
         self._agent_info = None
+        self._invoker = HarnessInvoker(config)
 
     async def run(self) -> None:
         """Main controller loop.
@@ -107,12 +111,16 @@ class Controller:
             # Log task details
             self._log_task_details(claimed_task)
 
-            # Log that we would execute (harness not implemented)
-            logger.info("Would execute (harness not implemented)")
+            # Execute the task
+            result = await self.execute(claimed_task)
 
-            # Fail the task with "harness not implemented" reason
-            await self.work_source.fail(task.id, "harness not implemented")
-            logger.info(f"Failed task {task.id} - harness not ready")
+            # Report result
+            if result.success:
+                await self.work_source.complete(task.id)
+                logger.info(f"Completed task {task.id}")
+            else:
+                await self.work_source.fail(task.id, result.completion_report)
+                logger.info(f"Failed task {task.id}: {result.completion_report}")
 
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
@@ -121,6 +129,50 @@ class Controller:
                 await self.work_source.fail(task.id, f"error during processing: {str(e)}")
             except Exception:
                 logger.error(f"Failed to fail task {task.id}", exc_info=True)
+
+    async def execute(self, task) -> ExecutionResult:
+        """Execute a task using the harness invoker.
+
+        Creates a workdir, gets repo info, builds prompt, and invokes harness.
+
+        Args:
+            task: TaskInfo object with task details
+
+        Returns:
+            ExecutionResult with success status and execution details
+        """
+        try:
+            # Create workdir based on task ID
+            workdir = Path(self.config.sessions_dir) / f"task-{task.id}"
+            logger.info(f"Creating workdir for task {task.id}: {workdir}")
+
+            # Get repo info from work source
+            repo_info = await self.work_source.get_repo_info(task.project_id)
+
+            # Load and render prompt template
+            template_path = Path("/opt/vf-agent/templates/task.txt")
+            # Fallback to local path if container path doesn't exist
+            if not template_path.exists():
+                template_path = Path(__file__).parent.parent.parent / "templates" / "task.txt"
+
+            template = load_template(template_path)
+            prompt = render_prompt(template, task)
+
+            # Invoke harness
+            result = await self._invoker.invoke(task, repo_info, workdir, prompt)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Task execution failed for {task.id}: {e}", exc_info=True)
+            return ExecutionResult(
+                success=False,
+                session_id=None,
+                completion_report=f"Execution failed: {str(e)}",
+                cost_usd=0.0,
+                num_turns=0,
+                gate_results=[]
+            )
 
     def _log_task_details(self, task) -> None:
         """Log detailed information about a claimed task."""

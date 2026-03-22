@@ -115,12 +115,17 @@ class TestController:
         mock_work_source.poll.assert_called_with("agent-123", ["executor", "test"])
 
     @pytest.mark.asyncio
-    async def test_successful_task_claim_and_fail(self, mock_work_source, test_config, sample_agent, sample_task):
-        """Test successful task claim and failure (harness not implemented)."""
+    async def test_successful_task_claim_and_execution_failure(self, mock_work_source, test_config, sample_agent, sample_task):
+        """Test successful task claim but execution failure due to environment."""
         # Setup mocks
         mock_work_source.register.return_value = sample_agent
         mock_work_source.poll.side_effect = [sample_task, None]  # Return task once, then no work
         mock_work_source.claim.return_value = sample_task
+
+        # Mock repo info
+        from controller.types import RepoInfo
+        mock_repo = RepoInfo(url="https://github.com/test/repo.git", branch="main")
+        mock_work_source.get_repo_info.return_value = mock_repo
 
         controller = Controller(mock_work_source, test_config)
 
@@ -128,9 +133,13 @@ class TestController:
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(controller.run(), timeout=0.1)
 
-        # Verify claim and fail were called
+        # Verify claim and fail were called (execution will fail due to permissions)
         mock_work_source.claim.assert_called_once_with("task-456", "agent-123")
-        mock_work_source.fail.assert_called_once_with("task-456", "harness not implemented")
+        # Should fail due to permission error on /sessions directory
+        mock_work_source.fail.assert_called_once()
+        call_args = mock_work_source.fail.call_args[0]
+        assert call_args[0] == "task-456"
+        assert "Permission denied" in call_args[1] or "Execution failed" in call_args[1]
 
     @pytest.mark.asyncio
     async def test_claim_failure_handling(self, mock_work_source, test_config, sample_agent, sample_task):
