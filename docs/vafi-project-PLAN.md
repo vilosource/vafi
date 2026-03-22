@@ -30,18 +30,28 @@ No blockers from CLI behavior.
 **Goal:** A running K8s cluster with vafi's container image built and
 deployable. The foundation everything else runs on.
 
-### K8s cluster — k3s on Hyper-V VM (decided)
+### K8s cluster — k3s on dedicated laptop (decided)
 
-**Setup:** Ubuntu Server 24.04 on Hyper-V, k3s installed via standard
-script. `kubectl` on WSL2 points at the VM's IP. Production cluster
-type (AKS or other) is a separate future decision — same manifests.
+**Setup:** Dedicated second laptop running Ubuntu Server 24.04 with
+k3s. Both machines on the same LAN — no virtual switches, no NAT,
+no networking complexity. Dev laptop (WSL2) runs `kubectl`, builds
+images. K8s laptop runs agent pods and can execute tasks unattended
+(the whole point of vafi). Production cluster type (AKS or other) is
+a separate future decision — same manifests.
 
-**VM provisioning:**
-- [ ] Create Hyper-V VM (Ubuntu Server 24.04, minimal)
-- [ ] Static IP or DHCP reservation for stable address
+```
+Your LAN
+  ├── Dev laptop (WSL2)     → code, kubectl, image builds
+  └── K8s laptop (k3s)      → runs agent pods, executes tasks
+```
+
+**K8s laptop setup:**
+- [ ] Install Ubuntu Server 24.04 (minimal, no GUI)
+- [ ] Static IP or DHCP reservation for stable LAN address
+- [ ] SSH access from dev laptop
 - [ ] Install k3s (`curl -sfL https://get.k3s.io | sh -`)
-- [ ] Copy kubeconfig to WSL2 (`~/.kube/config`), update server IP
-- [ ] Verify `kubectl get nodes` works from WSL2
+- [ ] Copy kubeconfig to dev laptop (`~/.kube/config`), update server IP
+- [ ] Verify `kubectl get nodes` works from dev laptop
 
 **Cluster configuration:**
 - [ ] Networking: vtf API reachable from agent pods, git server (GitLab) reachable
@@ -51,16 +61,16 @@ type (AKS or other) is a separate future decision — same manifests.
 
 ### Container images
 
-**Build on WSL2, import to k3s VM** (no registry needed for dev):
+**Build on dev laptop, import to k3s host** (no registry needed for dev):
 ```
-docker save vafi-agent:latest | ssh vafi-vm 'sudo k3s ctr images import -'
+docker save vafi-agent:latest | ssh k3s-host 'sudo k3s ctr images import -'
 ```
 
 - [ ] `vafi-base` — Dockerfile: `node:20-bookworm-slim` + git, curl, ssh, jq, python
 - [ ] `vafi-claude` — Dockerfile: `vafi-base` + Claude Code CLI
 - [ ] `vafi-agent` — Dockerfile: `vafi-claude` + Python controller, methodologies, templates
-- [ ] Build script that builds all layers and imports to the VM
-- [ ] Container registry decision deferred — local import is sufficient for dev
+- [ ] Build script that builds all layers and imports to k3s host
+- [ ] Container registry decision deferred — SSH + ctr import is sufficient for dev
 
 ### Value gate
 
@@ -72,9 +82,9 @@ just proof the platform works.
 
 | Decision | Options | Notes |
 |----------|---------|-------|
-| VM sizing | 2 CPU / 4 GB vs 4 CPU / 8 GB | Depends on how many concurrent agent pods we want |
-| vtf deployment | In-cluster (vafi-system namespace) vs external | Dogfood instance currently runs on localhost:8001 |
-| Container registry | Deferred — local import for dev, GHCR or ACR for prod | Not needed until CI/CD or multi-node |
+| Laptop specs | Depends on what's available | Needs enough RAM for k3s + multiple agent pods |
+| vtf deployment | In-cluster (vafi-system namespace) vs external | Dogfood instance currently runs on dev laptop at localhost:8001 |
+| Container registry | Deferred — SSH import for dev, GHCR or ACR for prod | Not needed until CI/CD or multi-node |
 
 ---
 
