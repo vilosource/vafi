@@ -31,8 +31,8 @@ async def main():
     logger.info("Starting vafi controller")
     logger.info(f"\n{config.display()}")
 
-    # Create VtfClient
-    vtf_client = VtfClient(base_url=config.vtf_api_url)
+    # Create VtfClient with bootstrap token for registration
+    vtf_client = VtfClient(base_url=config.vtf_api_url, token=config.vtf_token or None)
 
     try:
         async with vtf_client:

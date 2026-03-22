@@ -44,6 +44,8 @@ class VtfWorkSource:
             Agent information including ID and auth token
         """
         agent_data = await self._client.register_agent(name, tags)
+        # Store token on client for all subsequent authenticated calls
+        self._client.token = agent_data["token"]
         return AgentInfo(
             id=agent_data["id"],
             token=agent_data["token"]

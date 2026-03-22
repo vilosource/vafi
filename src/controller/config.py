@@ -16,6 +16,7 @@ class AgentConfig:
     agent_tags: list[str] = field(default_factory=lambda: ["executor"])
 
     vtf_api_url: str = "http://vtf-api.vafi-system.svc.cluster.local:8000"
+    vtf_token: str = ""
     poll_interval: int = 30
 
     task_timeout: int = 600
@@ -35,6 +36,7 @@ class AgentConfig:
             agent_role=os.environ.get("VF_AGENT_ROLE", "executor"),
             agent_tags=tags,
             vtf_api_url=os.environ.get("VF_VTF_API_URL", cls.vtf_api_url),
+            vtf_token=os.environ.get("VF_VTF_TOKEN", ""),
             poll_interval=int(os.environ.get("VF_POLL_INTERVAL", "30")),
             task_timeout=int(os.environ.get("VF_TASK_TIMEOUT", "600")),
             max_rework=int(os.environ.get("VF_MAX_REWORK", "3")),
@@ -50,6 +52,7 @@ class AgentConfig:
             f"  agent_role:         {self.agent_role}",
             f"  agent_tags:         {', '.join(self.agent_tags)}",
             f"  vtf_api_url:        {self.vtf_api_url}",
+            f"  vtf_token:          {'***' if self.vtf_token else '(none)'}",
             f"  poll_interval:      {self.poll_interval}s",
             f"  task_timeout:       {self.task_timeout}s",
             f"  max_rework:         {self.max_rework}",
