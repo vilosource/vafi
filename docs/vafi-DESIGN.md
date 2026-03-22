@@ -1238,16 +1238,38 @@ A Python project's tasks require tag `python`, routed to the
 
 ---
 
-## Spikes
+## Next Steps
 
-Two technical spikes must be run before controller implementation begins.
+### Dependencies
 
-### Spike 1: Harness session and workdir behavior
+**Kubernetes cluster setup** — vafi requires a running k8s cluster.
+This is a separate design and implementation effort covering:
+- Cluster provisioning (k3s on a single machine? Managed k8s? Multi-node?)
+- Networking (ingress, service mesh, DNS)
+- Storage (PersistentVolumes for session storage)
+- Secrets management (k8s Secrets, external secrets operator)
+- Image registry (Harbor, GHCR, or local registry)
+- Monitoring and observability
+- RBAC for agent pods (what can agents access?)
 
-**Goal:** Determine how the harness stores and resumes sessions across
+This should be designed in the vafi workspace as its own effort before
+controller implementation begins.
+
+**vtf project model changes** — vtf needs `repo_url` and
+`default_branch` fields on the project model. The task claim response
+must include project metadata. This is a small vtf change but blocks
+vafi from being project-agnostic.
+
+### Spikes
+
+Technical validation needed before controller implementation.
+
+**Spike 1: Harness session and workdir behavior**
+
+Goal: Determine how the harness stores and resumes sessions across
 container boundaries and working directory changes.
 
-**Questions to answer:**
+Questions to answer:
 1. Where does Claude Code store session files? (`~/.claude/`? Relative
    to cwd? Configurable?)
 2. Are session files tied to `$HOME` or to the working directory?
@@ -1257,20 +1279,32 @@ container boundaries and working directory changes.
 5. Can the working directory change between the initial invocation
    and `--resume`?
 
-**Method:** Run Claude Code in a container with a mounted volume. Execute
+Method: Run Claude Code in a container with a mounted volume. Execute
 a task, stop the container, start a new container with the same volume,
 attempt `--resume`.
 
-### Spike 2: Dynamic workdir auth resolution
+**Spike 2: Dynamic workdir auth resolution**
 
-**Goal:** Verify that the harness resolves auth from `$HOME` (stable)
+Goal: Verify that the harness resolves auth from `$HOME` (stable)
 rather than from cwd (changes per task).
 
-**Questions to answer:**
+Questions to answer:
 1. Does Claude Code read credentials from `~/.claude/` regardless of cwd?
 2. Does changing cwd between invocations break auth?
 3. Are there any cwd-relative config lookups that would fail?
 
-**Method:** Run Claude Code with credentials staged at `~/.claude/`.
+Method: Run Claude Code with credentials staged at `~/.claude/`.
 Invoke once with cwd `/workdir/a/`, then again with cwd `/workdir/b/`.
 Verify both invocations authenticate successfully.
+
+### Implementation roadmap
+
+Once dependencies and spikes are resolved:
+
+1. **K8s cluster** — provision and configure
+2. **vtf changes** — add `repo_url`, `default_branch` to project model
+3. **Controller** — Python asyncio controller (the core of vafi)
+4. **Agent image** — `vtf-vff-agent` with controller, methodologies, templates
+5. **Agent manifests** — k8s Deployments for executor, judge, supervisor pools
+6. **First project environment** — vtf dogfood as a k8s namespace
+7. **End-to-end test** — executor picks up a task, clones, executes, gates, reports
