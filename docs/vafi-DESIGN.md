@@ -881,18 +881,36 @@ orchestrator event.
 
 ### Session resumption for rework
 
-When a judge rejects a task, the controller resumes the original harness
-session rather than starting fresh:
+**Spike 1 findings (2026-03-22):** Investigation of vf-agents session
+handling confirms that Claude Code stores session files in `~/.claude/`
+inside the container, NOT in the working directory. These files do not
+survive container restarts. Workdir contents (code changes, commits) on
+shared volumes DO survive. This means:
 
-1. Controller captures `session_id` from the harness JSON output
-2. Stores `session_id` in vtf task metadata (survives controller restart)
-3. On rework, checks if session files exist in the task workdir
-4. If yes: `claude --resume <session-id> -p "<rework prompt>"`
-5. If no: falls back to fresh session with full spec + judge feedback
+| Scenario | Session resume? | Code state? |
+|----------|----------------|-------------|
+| Rework on same pod (still alive) | Yes | Yes |
+| Rework after pod restart/reschedule | No — fallback | Yes |
+| Rework picked up by different pod | No — fallback | Yes |
 
-Because session files live in the task workdir on the shared volume,
-**any executor** can resume any task's session. Rework is not tied to a
-specific executor.
+**The fallback path is the normal path for fleet operations.** Pods
+restart, get rescheduled, and scale down/up routinely. The design must
+treat fresh-session-with-context as the primary rework mechanism, not
+the exception.
+
+**Rework flow:**
+
+1. Controller captures `session_id` from harness JSON output
+2. Stores `session_id` in vtf task metadata (survives pod restarts)
+3. On rework, checks if session files exist in `~/.claude/`
+4. If yes (same pod, still alive): `claude --resume <session-id> -p "<rework prompt>"`
+5. If no (common case): fresh session with full spec + judge feedback as context
+
+**Future optimization:** Mount a per-task Claude config directory on the
+shared session volume (e.g., `/sessions/<ms>/<task>/.claude/`) and set
+`CLAUDE_CONFIG_DIR` per harness invocation. This would make session
+resume work across pods. Not required for MVP — the fallback path is
+proven effective from vtaskforge Phase 9 rework cycles.
 
 ### The contract: orchestrator <-> controller
 
