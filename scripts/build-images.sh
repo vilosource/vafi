@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGISTRY="${VAFI_REGISTRY:-192.168.2.90:30500}"
+REGISTRY="${VAFI_REGISTRY:-harbor.dev.viloforge.com/vafi}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 

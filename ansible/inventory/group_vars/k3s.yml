@@ -15,3 +15,17 @@ k3s_kubeconfig_local_path: "~/.kube/vafi-dev.yaml"
 k3s_namespaces:
   - vafi-system
   - vafi-agents
+  - traefik
+  - cert-manager
+  - harbor
+
+# WireGuard
+wg_address: "10.200.0.1/24"
+wg_port: 51820
+wg_peers: []
+# Example peer entry:
+# wg_peers:
+#   - name: dev-laptop
+#     public_key: "<peer-public-key>"
+#     allowed_ips: "10.200.0.10/32"
+#     endpoint: ""  # leave empty for dynamic endpoints

@@ -1,0 +1,43 @@
+# Traefik Helm values
+# Managed by Ansible — do not edit manually
+
+ports:
+  web:
+    port: 8000
+    exposedPort: 80
+    protocol: TCP
+  websecure:
+    port: 8443
+    exposedPort: 443
+    protocol: TCP
+
+service:
+  type: LoadBalancer
+
+# Use the wildcard cert as default TLS certificate
+tlsStore:
+  default:
+    defaultCertificate:
+      secretName: wildcard-dev-viloforge-tls
+
+# Enable Traefik dashboard
+ingressRoute:
+  dashboard:
+    enabled: true
+    matchRule: Host(`traefik.{{ domain }}`)
+    entryPoints:
+      - websecure
+    tls:
+      secretName: wildcard-dev-viloforge-tls
+
+# Redirect HTTP to HTTPS
+additionalArguments:
+  - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+  - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+
+# Logs
+logs:
+  general:
+    level: INFO
+  access:
+    enabled: true

@@ -25,7 +25,7 @@ spec:
     spec:
       initContainers:
         - name: setup-ssh
-          image: 192.168.2.90:30500/vafi-base:latest
+          image: harbor.dev.viloforge.com/vafi/vafi-base:latest
           command:
             - sh
             - -c
@@ -45,7 +45,7 @@ spec:
 
       containers:
         - name: vafi-agent
-          image: 192.168.2.90:30500/vafi-agent:latest
+          image: harbor.dev.viloforge.com/vafi/vafi-agent:latest
           imagePullPolicy: Always
           securityContext:
             runAsUser: 1000

@@ -1,0 +1,67 @@
+---
+- name: Install WireGuard
+  ansible.builtin.apt:
+    name: wireguard
+    state: present
+
+- name: Generate WireGuard private key
+  ansible.builtin.shell: wg genkey
+  args:
+    creates: /etc/wireguard/privatekey
+  register: wg_genkey
+  no_log: true
+
+- name: Save private key to file
+  ansible.builtin.copy:
+    content: "{{ wg_genkey.stdout }}"
+    dest: /etc/wireguard/privatekey
+    owner: root
+    group: root
+    mode: "0600"
+  when: wg_genkey.changed
+  no_log: true
+
+- name: Read private key
+  ansible.builtin.slurp:
+    src: /etc/wireguard/privatekey
+  register: wg_private_key_file
+  no_log: true
+
+- name: Derive public key
+  ansible.builtin.shell: echo "{{ wg_private_key_file.content | b64decode | trim }}" | wg pubkey
+  register: wg_pubkey_result
+  changed_when: false
+  no_log: true
+
+- name: Set WireGuard key facts
+  ansible.builtin.set_fact:
+    wg_private_key: "{{ wg_private_key_file.content | b64decode | trim }}"
+    wg_public_key: "{{ wg_pubkey_result.stdout | trim }}"
+  no_log: true
+
+- name: Display public key for peer configuration
+  ansible.builtin.debug:
+    msg: "WireGuard public key for {{ inventory_hostname }}: {{ wg_public_key }}"
+
+- name: Deploy WireGuard configuration
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: "/etc/wireguard/{{ wg_interface }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart wireguard
+
+- name: Enable and start WireGuard
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ wg_interface }}"
+    state: started
+    enabled: true
+
+- name: Enable IP forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true

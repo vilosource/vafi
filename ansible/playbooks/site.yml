@@ -1,8 +1,13 @@
 ---
 # Master playbook — provisions the full server
 #
+# Prerequisites:
+#   ansible-galaxy collection install -r requirements.yml
+#   echo 'vault-password' > ~/.ansible/vafi-vault-password
+#   ansible-vault encrypt inventory/group_vars/vault.yml  (after filling in secrets)
+#
 # Usage:
-#   cd ansible && ansible-playbook playbooks/site.yml -i inventory/dev.yml
+#   cd ansible && ansible-playbook playbooks/site.yml
 
 - name: Base OS configuration
   hosts: k3s
@@ -10,8 +15,19 @@
   roles:
     - role: ../roles/common
 
+- name: Configure WireGuard VPN
+  hosts: k3s
+  become: true
+  roles:
+    - role: ../roles/wireguard
+
 - name: Install and configure k3s
   hosts: k3s
   become: true
   roles:
     - role: ../roles/k3s
+
+- name: Install k8s applications (cert-manager, Traefik, Harbor)
+  hosts: k3s
+  roles:
+    - role: ../roles/k3s-apps

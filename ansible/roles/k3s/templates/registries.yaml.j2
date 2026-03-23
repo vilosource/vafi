@@ -2,9 +2,6 @@
 # Managed by Ansible — do not edit manually
 
 mirrors:
-  "{{ ansible_host }}:30500":
+  "harbor.dev.viloforge.com":
     endpoint:
-      - "http://{{ ansible_host }}:30500"
-  "registry.vafi-system.svc.cluster.local:5000":
-    endpoint:
-      - "http://registry.vafi-system.svc.cluster.local:5000"
+      - "https://harbor.dev.viloforge.com"

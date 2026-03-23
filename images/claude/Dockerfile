@@ -1,4 +1,4 @@
-ARG REGISTRY=192.168.2.90:30500
+ARG REGISTRY=harbor.dev.viloforge.com/vafi
 FROM ${REGISTRY}/vafi-base:latest
 
 # Install Claude Code CLI globally (runs as root, then switch back)

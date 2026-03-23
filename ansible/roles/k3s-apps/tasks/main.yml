@@ -1,0 +1,232 @@
+---
+# All Helm and kubectl tasks run on the control machine (localhost)
+# using the kubeconfig fetched by the k3s role.
+
+# ============================================================
+# cert-manager
+# ============================================================
+
+- name: Add Jetstack Helm repo
+  kubernetes.core.helm_repository:
+    name: jetstack
+    repo_url: https://charts.jetstack.io
+  delegate_to: localhost
+  become: false
+
+- name: Install cert-manager
+  kubernetes.core.helm:
+    name: cert-manager
+    chart_ref: jetstack/cert-manager
+    chart_version: "{{ cert_manager_version }}"
+    release_namespace: "{{ cert_manager_namespace }}"
+    create_namespace: true
+    kubeconfig: "{{ k3s_kubeconfig_local_path }}"
+    values:
+      crds:
+        enabled: true
+  delegate_to: localhost
+  become: false
+
+- name: Wait for cert-manager webhook to be ready
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ k3s_kubeconfig_local_path }}
+    -n {{ cert_manager_namespace }}
+    wait --for=condition=Available deployment/cert-manager-webhook
+    --timeout=120s
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Create Cloudflare API token secret
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ k3s_kubeconfig_local_path }}
+    -n {{ cert_manager_namespace }}
+    create secret generic cloudflare-api-token
+    --from-literal=api-token={{ vault_cloudflare_api_token }}
+    --dry-run=client -o yaml
+  register: cf_secret_yaml
+  changed_when: false
+  no_log: true
+  delegate_to: localhost
+  become: false
+
+- name: Apply Cloudflare API token secret
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ k3s_kubeconfig_local_path }} apply -f -
+  args:
+    stdin: "{{ cf_secret_yaml.stdout }}"
+  changed_when: true
+  no_log: true
+  delegate_to: localhost
+  become: false
+
+- name: Deploy ClusterIssuer manifest
+  ansible.builtin.copy:
+    content: |
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: letsencrypt-prod
+      spec:
+        acme:
+          server: {{ letsencrypt_server }}
+          email: {{ letsencrypt_email }}
+          privateKeySecretRef:
+            name: letsencrypt-prod-key
+          solvers:
+          - dns01:
+              cloudflare:
+                apiTokenSecretRef:
+                  name: cloudflare-api-token
+                  key: api-token
+    dest: /tmp/vafi-clusterissuer.yaml
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Apply ClusterIssuer
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ k3s_kubeconfig_local_path }}
+    apply -f /tmp/vafi-clusterissuer.yaml
+  changed_when: true
+  delegate_to: localhost
+  become: false
+
+- name: Deploy wildcard certificate for traefik namespace
+  ansible.builtin.copy:
+    content: |
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: wildcard-dev-viloforge
+        namespace: {{ traefik_namespace }}
+      spec:
+        secretName: wildcard-dev-viloforge-tls
+        issuerRef:
+          name: letsencrypt-prod
+          kind: ClusterIssuer
+        dnsNames:
+        - "*.{{ domain }}"
+        - "{{ domain }}"
+    dest: /tmp/vafi-wildcard-cert-traefik.yaml
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Apply wildcard certificate for traefik namespace
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ k3s_kubeconfig_local_path }}
+    apply -f /tmp/vafi-wildcard-cert-traefik.yaml
+  changed_when: true
+  delegate_to: localhost
+  become: false
+
+- name: Deploy wildcard certificate for harbor namespace
+  ansible.builtin.copy:
+    content: |
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: wildcard-dev-viloforge
+        namespace: {{ harbor_namespace }}
+      spec:
+        secretName: wildcard-dev-viloforge-tls
+        issuerRef:
+          name: letsencrypt-prod
+          kind: ClusterIssuer
+        dnsNames:
+        - "*.{{ domain }}"
+        - "{{ domain }}"
+    dest: /tmp/vafi-wildcard-cert-harbor.yaml
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Apply wildcard certificate for harbor namespace
+  ansible.builtin.command: >
+    kubectl --kubeconfig {{ k3s_kubeconfig_local_path }}
+    apply -f /tmp/vafi-wildcard-cert-harbor.yaml
+  changed_when: true
+  delegate_to: localhost
+  become: false
+
+# ============================================================
+# Traefik
+# ============================================================
+
+- name: Add Traefik Helm repo
+  kubernetes.core.helm_repository:
+    name: traefik
+    repo_url: https://traefik.github.io/charts
+  delegate_to: localhost
+  become: false
+
+- name: Deploy Traefik values template
+  ansible.builtin.template:
+    src: traefik-values.yaml.j2
+    dest: /tmp/vafi-traefik-values.yaml
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Install Traefik
+  kubernetes.core.helm:
+    name: traefik
+    chart_ref: traefik/traefik
+    chart_version: "{{ traefik_chart_version }}"
+    release_namespace: "{{ traefik_namespace }}"
+    create_namespace: true
+    kubeconfig: "{{ k3s_kubeconfig_local_path }}"
+    values_files:
+      - /tmp/vafi-traefik-values.yaml
+  delegate_to: localhost
+  become: false
+
+# ============================================================
+# Harbor
+# ============================================================
+
+- name: Add Harbor Helm repo
+  kubernetes.core.helm_repository:
+    name: harbor
+    repo_url: https://helm.goharbor.io
+  delegate_to: localhost
+  become: false
+
+- name: Deploy Harbor values template
+  ansible.builtin.template:
+    src: harbor-values.yaml.j2
+    dest: /tmp/vafi-harbor-values.yaml
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+
+- name: Install Harbor
+  kubernetes.core.helm:
+    name: harbor
+    chart_ref: harbor/harbor
+    chart_version: "{{ harbor_chart_version }}"
+    release_namespace: "{{ harbor_namespace }}"
+    create_namespace: true
+    kubeconfig: "{{ k3s_kubeconfig_local_path }}"
+    values_files:
+      - /tmp/vafi-harbor-values.yaml
+  delegate_to: localhost
+  become: false
+
+# ============================================================
+# Cleanup temp files
+# ============================================================
+
+- name: Remove temporary manifests and values files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/vafi-clusterissuer.yaml
+    - /tmp/vafi-wildcard-cert-traefik.yaml
+    - /tmp/vafi-wildcard-cert-harbor.yaml
+    - /tmp/vafi-traefik-values.yaml
+    - /tmp/vafi-harbor-values.yaml
+  delegate_to: localhost
+  become: false

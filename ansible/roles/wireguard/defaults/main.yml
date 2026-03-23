@@ -1,0 +1,7 @@
+---
+# WireGuard defaults — override in group_vars/k3s.yml
+
+wg_interface: wg0
+wg_port: 51820
+wg_address: "10.200.0.1/24"
+wg_peers: []

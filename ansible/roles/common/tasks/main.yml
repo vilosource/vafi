@@ -44,6 +44,24 @@
     port: "30000:32767"
     proto: tcp
 
+- name: Allow WireGuard through UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ wg_port | default('51820') }}"
+    proto: udp
+
+- name: Allow HTTP through UFW
+  community.general.ufw:
+    rule: allow
+    port: "80"
+    proto: tcp
+
+- name: Allow HTTPS through UFW
+  community.general.ufw:
+    rule: allow
+    port: "443"
+    proto: tcp
+
 - name: Enable UFW
   community.general.ufw:
     state: enabled
