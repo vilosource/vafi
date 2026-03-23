@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGISTRY="${VAFI_REGISTRY:-harbor.dev.viloforge.com/vafi}"
+REGISTRY="${VAFI_REGISTRY:-harbor.viloforge.com/vafi}"
 
 echo "==> Pushing vafi-base"
 docker push "${REGISTRY}/vafi-base:latest"

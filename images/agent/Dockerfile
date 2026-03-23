@@ -1,4 +1,4 @@
-ARG REGISTRY=harbor.dev.viloforge.com/vafi
+ARG REGISTRY=harbor.viloforge.com/vafi
 FROM ${REGISTRY}/vafi-claude:latest
 
 # Copy controller source code (pyproject.toml expects src/ layout)
