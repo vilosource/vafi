@@ -1,9 +1,0 @@
-# k3s server configuration
-# Managed by Ansible — do not edit manually
-
-write-kubeconfig-mode: "0644"
-disable:
-  - traefik
-tls-san:
-  - {{ inventory_hostname }}
-  - {{ ansible_host | default(inventory_hostname) }}

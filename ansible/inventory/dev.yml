@@ -1,9 +1,0 @@
----
-all:
-  children:
-    k3s:
-      hosts:
-        fuji.dev.viloforge.com:
-          ansible_host: 192.168.2.91
-          ansible_user: ansible
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
