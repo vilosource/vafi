@@ -30,38 +30,47 @@ But vtf doesn't know about CXDB — the task detail page has no trace link,
 and the supervisor has no way to inspect execution without manually querying
 the CXDB API.
 
-## Proposed Integration
+## Architecture Decision
 
-### 1. Store the CXDB context reference on the vtf task
+The vafi controller does NOT write trace references back to vtf. Instead,
+vtf queries CXDB directly using the task ID as the lookup key. This means:
 
-After execution, the controller writes the CXDB context back to vtf.
-Options in order of preference:
+- **vafi's only responsibility**: cxtx tags contexts with `task:<id>` (already done)
+- **vtf queries CXDB**: task detail API enriches responses with trace data
+- **No middleman**: if the controller crashes, the trace still exists in CXDB
 
-- **Task link** — `POST /v1/links/` with `link_type: "trace"`,
-  `source_type: "task"`, `source_id: "<task_id>"`,
-  `target_type: "url"`, `target_id: "<cxdb_url>"`.
-  Structured, queryable, fits the existing link model.
+CXDB is an accepted dependency for vtf. It will also be used for the
+judge/review system in the future (judge reads execution traces to inform
+reviews).
 
-- **Task note** — `POST /v1/tasks/{id}/notes/` with the CXDB URL.
-  Simpler, no model changes, but not structured — harder to extract
-  programmatically.
+## vtf-side Implementation
 
-### 2. vtf task detail page: "View Trace" link
+### 1. CXDB client in vtf backend
 
-When a task has a `trace` link, the task detail page shows a "View Trace"
-button linking to the CXDB web UI. If multiple traces exist (rework),
-show each attempt with its context.
+New service that queries CXDB for traces by task ID:
+`GET /v1/contexts` filtered by `task:<id>` label. Returns context ID,
+turn count, error count, is_live, and the web UI URL.
 
-### 3. Execution summary (future)
+### 2. Task detail API enrichment
 
-Pull key stats from CXDB and display inline on the vtf task detail:
-turn count, tool calls, errors, model, duration. Avoids leaving vtf
-for the common case.
+The task serializer includes a `traces` field with CXDB data when
+available. Graceful degradation — if CXDB is unreachable, the field
+is null.
 
-### 4. Supervisor signals (future)
+### 3. Task detail page: "View Trace" link
 
-Surface CXDB data in the agents page: last execution turn count, error
-rate, average task duration per agent. Helps the supervisor spot patterns.
+Renders trace link(s) to the CXDB web UI. If multiple traces exist
+(rework), shows each attempt.
+
+### 4. Execution summary (future)
+
+Pull key stats from CXDB inline: turn count, tool calls, errors, model,
+duration. Avoids leaving vtf for the common case.
+
+### 5. Judge integration (future)
+
+Judge reads execution traces from CXDB to inform reviews — sees the
+agent's reasoning, not just the git diff.
 
 ## CXDB API Reference
 
@@ -82,14 +91,15 @@ See `vtaskforge/docs/guides/cxdb-trace-lookup-GUIDE.md` for full usage.
 1. For rework with CXDB forking — does `POST /v1/contexts/create` with
    `base_turn_id` from a previous context work across contexts, or only
    within the same context?
-2. Should the CXDB base URL be configurable per-environment in vtf
-   (dev vs prod instances)?
-3. Which link type to use — does vtf's link system already support
-   `link_type: "trace"` or does it need to be added?
+2. CXDB base URL needs to be configurable per-environment in vtf settings
+   (dev: `cxdb.dev.viloforge.com`, prod: `cxdb.viloforge.com`)
+3. How should the judge consume traces — full turn replay or summary?
 
 ## Implementation Order
 
-1. **vafi controller**: write CXDB context URL to vtf task after execution
-   (as link or note)
-2. **vtf frontend**: render "View Trace" link on task detail page
-3. **vtf API (optional)**: proxy CXDB stats for inline execution summary
+All work is on the vtf side:
+
+1. **vtf backend**: CXDB client service + task serializer enrichment
+2. **vtf frontend**: "View Trace" link on task detail page
+3. **vtf frontend**: trace stats on agents page
+4. **vtf backend (future)**: judge reads traces from CXDB for reviews
