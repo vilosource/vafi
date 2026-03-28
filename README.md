@@ -1,6 +1,6 @@
 # vafi
 
-Viloforge Agentic Fleet Infrastructure — an autonomous AI agent execution platform. Deploys executor and judge agents as Kubernetes pods that pull tasks from [vtaskforge](https://github.com/vilosource/vtaskforge), execute them via Claude Code, and report results without a human in the loop.
+Viloforge Agentic Fleet Infrastructure — an autonomous AI agent execution platform. Deploys executor and judge agents as Kubernetes pods that pull tasks from [vtaskforge](https://github.com/vilosource/vtaskforge), execute them via an AI harness (Claude Code, or any compatible CLI), and report results without a human in the loop.
 
 ## How it works
 
