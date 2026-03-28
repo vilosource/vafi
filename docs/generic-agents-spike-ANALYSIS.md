@@ -29,6 +29,10 @@ Make vafi agents work as a general solution — generic executor and judge agent
 - No task branch created — executor commits directly to the default branch in the workdir
 - Each task gets its own workdir (`/sessions/task-<id>/`), only one agent can claim a task at a time — no concurrent access
 - Judge enters the same workdir as executor — can see commits via `git log`, changed files via `git diff HEAD~N..HEAD`
+- SSH auth to GitHub works (authenticated as `vilosource`) — push is possible
+- **BLOCKER**: No git user.name/user.email configured — `git commit` will fail. Entrypoint must set this.
+- No Claude Code plugins or settings beyond CLAUDE.md
+- Python 3.11.2, pytest 7.2.1, git, curl, jq available in container
 
 ### Known Unknowns (we need to figure out)
 
