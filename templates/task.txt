@@ -1,9 +1,0 @@
-Implement the following task.
-
-## Task: {title} ({id})
-
-## Specification
-{spec}
-
-## Test Commands
-{test_command}

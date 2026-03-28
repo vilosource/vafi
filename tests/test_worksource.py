@@ -89,10 +89,9 @@ class TestVtfWorkSource:
         # Call poll
         result = await self.work_source.poll("agent_123", ["executor"])
 
-        # Verify it called list_tasks for rework first
+        # Verify it called list_tasks for rework first (no agent filter)
         self.mock_client.list_tasks.assert_called_once_with(
             status="changes_requested",
-            assigned_to="agent_123",
             expand=["reviews"]
         )
         # Should not call list_claimable since rework was found
@@ -122,7 +121,6 @@ class TestVtfWorkSource:
         # Verify it called both endpoints in priority order
         self.mock_client.list_tasks.assert_called_once_with(
             status="changes_requested",
-            assigned_to="agent_123",
             expand=["reviews"]
         )
         self.mock_client.list_claimable.assert_called_once_with(["executor"], "agent_123")

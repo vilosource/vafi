@@ -17,7 +17,6 @@ from .context import build_context, write_context
 from .gates import GateRunner
 from .heartbeat import agent_heartbeat_loop, heartbeat_loop
 from .invoker import HarnessInvoker
-from .prompt import load_template, render_prompt
 from .types import ExecutionResult
 
 if TYPE_CHECKING:
