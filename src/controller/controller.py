@@ -298,7 +298,10 @@ class Controller:
             # Get repo info from work source
             repo_info = await self.work_source.get_repo_info(task.project_id)
 
-            # Build and write context file (materializes vtf state into workdir)
+            # Clone repo first (must happen before writing context file)
+            await self._invoker._ensure_repo_cloned(repo_info, workdir)
+
+            # Write context file into the cloned workdir
             await self._write_task_context(task, workdir)
 
             # Build prompt — points agent to the context file
@@ -307,7 +310,7 @@ class Controller:
             else:
                 prompt = f"Work on task {task.title} ({task.id}). Read .vafi/context.md for the full specification and history."
 
-            # Invoke harness
+            # Invoke harness (clone is no-op since repo already cloned above)
             result = await self._invoker.invoke(task, repo_info, workdir, prompt)
 
             # If harness failed, return without running gates
