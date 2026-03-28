@@ -1,4 +1,4 @@
-ARG REGISTRY=harbor.viloforge.com/vafi
+ARG REGISTRY=vafi
 
 # Stage 1: Build cxtx from cxdb source
 FROM rust:1.85-bookworm AS cxtx-builder
