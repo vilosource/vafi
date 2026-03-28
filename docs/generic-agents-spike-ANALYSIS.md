@@ -112,18 +112,25 @@ Test the executor on an unfamiliar repo with a generic methodology.
 **2.1 Create test task**
 - Write a task spec: "Add a power function to operations.py"
 - Include: description, files to create/modify, implementation approach, acceptance criteria, test command
+- **Must set `needs_review_on_completion: true`** so task goes to `pending_completion_review` for the judge in Phase 4
 - Submit task to vtf-dev
 
 **2.2 Observe execution**
 - Watch executor logs: does it claim, clone, execute?
 - Monitor CXDB for trace capture
-- Wait for task to reach `pending_completion_review` or `done`
+- Wait for task to reach `pending_completion_review`
 
 **2.3 Evaluate results**
 - Read CXDB trace: what did the executor do? Did it read patterns? Follow conventions?
 - Check the workdir: are the files correct? Do tests pass? Is the commit clean?
 - Document findings in Spike 1 section
 - Update Rumsfeld matrix with learnings
+
+**2.4 If execution fails**
+- Read CXDB trace and executor logs to diagnose
+- Fix methodology or infrastructure as needed
+- Create a new task (new ID = fresh workdir) and retry
+- Do not proceed to Phase 3 until at least one successful execution
 
 ### Phase 3: Judge Infrastructure
 
@@ -143,9 +150,14 @@ Build the judge capability into the controller.
 - Use `--json-schema` to enforce structured verdict output from harness
 - Judge prompt template: `templates/judge.txt` (similar to task.txt but "verify" instead of "implement")
 
-**3.3 Build and deploy judge**
+**3.3 Add judge section to Helm chart**
+- The current chart has one `executor` section. Add a `judge` section to `values.yaml` with its own `replicas`, `role`, `tags`, and resource config.
+- Add `templates/judge-deployment.yaml` — same structure as executor deployment but uses `judge` values and `VF_AGENT_ROLE=judge`.
+- Alternative: reuse executor template with a loop over roles. Decide based on complexity.
+
+**3.4 Build and deploy judge**
 - Build image with judge methodology + controller changes
-- Deploy second pod to vafi-dev: `VF_AGENT_ROLE=judge`, `VF_AGENT_TAGS=judge`
+- Deploy to vafi-dev: Helm upgrade with `judge.replicas=1`
 - Verify judge pod starts and polls `pending_completion_review`
 
 ### Phase 4: Spike 2 — Judge Verification
@@ -174,6 +186,9 @@ Test the full autonomous cycle: execute → judge reject → rework → judge ap
 **5.1 Create a task with an intentional trap**
 - Write a task spec that a competent executor will implement but with a gap the judge should catch
 - Example: "Add a divide function" — executor implements but may miss division by zero handling
+- The executor may handle the edge case correctly (Claude is smart) — that's a valid outcome too. If the executor gets it right and the judge approves on first pass, that tells us the full cycle works even without rework.
+- If we need to force rework: manually submit a `changes_requested` review before the judge picks it up, with specific feedback. This tests the rework path regardless of executor quality.
+- **Must set `needs_review_on_completion: true`**
 - Submit task
 
 **5.2 Observe full cycle**
@@ -200,14 +215,26 @@ Test how little methodology the agents actually need.
 **6.2 Strip judge methodology**
 - Same reduction
 
-**6.3 Run the same task from Spike 1**
-- Fresh workdir, same spec
-- Compare results to Spike 1: same quality? Worse? Better?
+**6.3 Run a new task with the same pattern as Spike 1**
+- Create a new task (different ID = fresh workdir) with a similar spec: "Add a modulo function"
+- Same complexity as Spike 1 so results are comparable
+- Compare: same quality? Worse? Better?
 
 **6.4 Evaluate**
 - What's essential in the methodology?
 - What does the model figure out on its own?
 - Document findings, update matrix
+
+---
+
+### Iteration Policy
+
+Each phase ends with an evaluation. If the spike reveals issues:
+- **Infrastructure issues** (crash, config error, blocker): fix before proceeding.
+- **Methodology issues** (executor missed patterns, judge gave bad verdict): iterate on methodology and rerun the spike with a new task before proceeding.
+- **Acceptable imperfections** (minor code style issues, verbose output): document and proceed. Don't chase perfection — the goal is to learn, not to ship.
+
+Phases are sequential — don't skip ahead. Each phase builds on validated results from the previous one.
 
 ---
 
