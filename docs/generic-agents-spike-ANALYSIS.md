@@ -23,50 +23,45 @@ Make vafi agents work as a general solution — generic executor and judge agent
 - Judge accesses executor's work via shared workdir — no push needed
 - Executor clones default branch, shallow depth 1, commits locally
 - No MCP tools in container — harness runs headless, controller handles all vtf API calls
-- Controller prompt template is minimal (4 lines: title, id, spec, test_command)
-- `VF_AGENT_ROLE` config flag exists and is read from env, but controller logic does not branch on it yet
-- Repo cloned with `--depth 1 --single-branch` — workdir has one history commit plus executor's commits. No full repo history available.
+- Prompt is a minimal pointer: "Work on task X. Read .vafi/context.md for details."
+- Controller branches on `VF_AGENT_ROLE`: executor polls claimable/rework, judge polls pending_completion_review
+- Repo cloned with `--depth 1 --single-branch` — workdir has one history commit plus executor's commits
 - No task branch created — executor commits directly to the default branch in the workdir
-- Each task gets its own workdir (`/sessions/task-<id>/`), only one agent can claim a task at a time — no concurrent access
-- Judge enters the same workdir as executor — can see commits via `git log`, changed files via `git diff HEAD~N..HEAD`
+- Each task gets its own workdir (`/sessions/task-<id>/`), only one agent can claim a task at a time
+- Judge enters the same workdir as executor — can see commits via `git log`
+- Judge does NOT claim tasks — submits review directly, review endpoint handles state transition
 - SSH auth to GitHub works (authenticated as `vilosource`) — push is possible
-- **BLOCKER**: No git user.name/user.email configured — `git commit` will fail. Entrypoint must set this.
-- No Claude Code plugins or settings beyond CLAUDE.md
+- Git user.name/email configured in entrypoint (blocker fixed)
 - Python 3.11.2, pytest 7.2.1, git, curl, jq available in container
-- Claude Code 2.1.85 supports `--resume <session-id>` for session resumption and `--fork-session` for branching from a resume point
-- Claude Code supports `--json-schema` for structured output validation — controller can enforce verdict format from judge (solves verdict parsing)
-- Claude Code supports `--no-session-persistence` to disable session file saving
-- Session files not yet present in container — created on first execution, location TBD
+- Claude Code 2.1.85 with `--resume`, `--fork-session`, `--json-schema`, `--no-session-persistence`
+- `.vafi/context.md` is the agent communication channel — controller materializes vtf state (spec, reviews, notes) into workdir before each invocation
+- Context file is regenerated before every invocation with latest vtf state
+- Generic executor methodology: 60 lines, works on unfamiliar repos (Spike 1: 14 turns, $0.12)
+- Generic judge methodology: 65 lines, produces structured JSON verdicts
+- Full autonomous cycle verified: executor → judge → rework with feedback → judge approve (Spike 3b)
+- Shallow clone sufficient for judge — judge reads files and executor commits, doesn't need full history (Spike 2)
 
-### Known Unknowns (we need to figure out)
+### Known Unknowns (remaining — not answered by spikes)
 
-- What does a generic executor methodology look like? We've only tested project-specific ones (current one is 214 lines, vafi-specific: asyncio, WorkSource protocol).
-- What does a generic judge methodology look like? The simulation used a hand-crafted 248-line persona tied to vtf.
-- How does the executor discover it's doing rework? Does it read reviews from vtf, or does the controller need to inject feedback into the prompt? (`get_rework_context()` exists in vtf.py but controller doesn't call it)
-- Does session resume actually help on rework, or does a fresh prompt with context work better?
-- How does the executor handle repos it's never seen? Cold start with no CLAUDE.md, no conventions, no context.
-- What's the minimum task spec that produces reliable results?
-- How much of the methodology is actually needed vs what the model figures out on its own?
-- ~~How does the judge extract a structured verdict (approved/changes_requested + reason) from harness output?~~ **Resolved**: `--json-schema` flag enforces structured output. Controller passes verdict schema, gets guaranteed JSON.
-- Does `--depth 1` shallow clone give the judge enough context to review? It can read files but has no git history beyond the clone point + executor commits.
+- Does session resume help on rework, or is a fresh prompt with context file sufficient? (Not tested — context file approach worked without resume)
+- What's the minimum task spec that produces reliable results? (Spikes used detailed specs — haven't tested minimal ones)
+- What failure modes exist when executor and judge disagree repeatedly? (3-attempt limit exists but not tested)
+- What happens with large repos where clone is slow? (Spike repo was tiny)
+- How does the system perform on non-Python codebases? (Only tested Python)
 
-### Unknown Knowns (experience we haven't formalized)
+### Unknown Knowns → Now Known (formalized by spikes)
 
-- The simulation protocol guide documents what worked, but it's informal — human-driven, not machine-driven
-- The vtf-executor (239 lines) and vtf-judge (248 lines) agent definitions at `~/.claude/agents/` encode real learnings but are tied to vtf/vafi
-- We know from Phase 9 that judges catch real issues (stale comments, missing tests, N+1 queries) but we don't know which parts of the judge methodology actually drove that vs the model's inherent capability
-- We've seen rework succeed in simulation but the human was the middleman — we don't know if the autonomous flow preserves enough context
-- Branch strategy was never an issue in simulation because the human managed branches — autonomous agents need a strategy
+- ~~The simulation protocol guide documents what worked, but it's informal~~ → Generic methodology extracts the essential steps. Project-specific content is unnecessary.
+- ~~We don't know which parts of the judge methodology drove quality~~ → The judge methodology is 65 lines. The model's inherent capability handles most of the review; the methodology just structures the output.
+- ~~We don't know if autonomous rework preserves enough context~~ → It does, via the context file. The executor reads the rejection, addresses it specifically, and the judge approves.
+- ~~Branch strategy was never an issue~~ → No task branches needed. Each task has its own workdir. The executor commits on whatever branch was cloned.
 
-### Unknown Unknowns (risks we haven't considered)
+### Unknown Unknowns (discovered during spikes)
 
-- How does the executor behave on unfamiliar codebases with no patterns to follow?
-- What happens when the spec is ambiguous and there's no human to ask?
-- How does the judge verify work in a repo it doesn't understand?
-- What failure modes exist when executor and judge disagree repeatedly?
-- Does the 3-attempt rework limit produce good outcomes or just exhaust retries?
-- What happens with large repos where clone is slow?
-- Does the executor make destructive changes outside the spec scope?
+- Context file write order matters — must clone repo before writing `.vafi/context.md` or clone fails (discovered and fixed in Spike 3b)
+- Stale tasks in `pending_completion_review` get picked up by the judge indiscriminately — judge has no project filtering (discovered in Phase 4)
+- Multi-repo tasks decompose into multiple vtf tasks with dependencies — context passes via vtf notes (discussed, not spike-tested)
+- What happens when the executor produces code that passes its own tests but breaks in integration?
 
 ---
 
