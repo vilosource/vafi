@@ -300,6 +300,19 @@ _Updated as spikes are executed._
   - Root cause for judge: the judge reviewed the code against the spec only, not against the previous rejection. The spec didn't require division-by-zero, so the judge approved.
   - **Decision needed**: Should the controller inject judge feedback into the rework prompt? Or should the executor/judge query vtf for reviews themselves?
 
+### Spike 3b: Rework Flow (with context file mechanism)
+- Date: 2026-03-28
+- Result: **SUCCESS**
+- CXDB traces: ctx=9 (executor), ctx=10 (executor rework), ctx=11 (judge)
+- Task: up68Sq8sABNOabgl5bkOG (vtf-dev)
+- Learnings:
+  - Context file mechanism works. Controller writes `.vafi/context.md` to workdir with full vtf state (spec, notes, reviews).
+  - Executor read the judge rejection from context file and addressed it specifically: added `if b == 0: raise ValueError` and a test.
+  - Judge approved the rework — full cycle: `todo → doing → pending_completion_review → changes_requested → doing → pending_completion_review → done`
+  - Context file serves as the message-passing mechanism between agents. No MCP tools or vtf CLI needed in the container.
+  - **Bug found**: context file was written before git clone, causing clone to fail on non-existent workdir. Fixed by cloning first, then writing context.
+  - This mechanism generalizes to any agent chain — each agent's output (stored in vtf) is materialized in the next agent's context file.
+
 ### Spike 4: Minimal methodology
 - Date: TBD
 - Result: TBD
