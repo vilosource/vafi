@@ -268,10 +268,22 @@ _Updated as spikes are executed._
   - All 24 tests pass (18 existing + 6 new in operations + the original validator tests make 25 repo-wide)
 
 ### Spike 2: Judge verification
-- Date: TBD
-- Result: TBD
-- CXDB trace: TBD
-- Learnings: TBD
+- Date: 2026-03-28
+- Result: **SUCCESS**
+- CXDB trace (executor): https://cxdb.dev.viloforge.com/c/4
+- CXDB trace (judge): https://cxdb.dev.viloforge.com/c/5
+- Task: wgQvEwdr2bcCW0JI8yghi (vtf-dev)
+- Executor: 13 turns, $0.10
+- Judge: approved with specific reasoning
+- Learnings:
+  - Full autonomous cycle works: executor → pending_completion_review → judge → done
+  - Judge ran tests independently and verified all 22 pass
+  - Judge correctly verified acceptance criteria
+  - Judge produced structured verdict parsed by controller
+  - Judge submitted review via POST /tasks/{id}/reviews/ without claiming
+  - Shared workdir works — judge accessed executor's code and commits
+  - The judge did NOT need to claim the task — review submission handles state transition
+  - Stale test data in pending_completion_review was a nuisance — judge picks up whatever is in queue (no project filtering yet)
 
 ### Spike 3: Rework flow
 - Date: TBD
