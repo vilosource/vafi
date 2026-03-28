@@ -33,6 +33,10 @@ Make vafi agents work as a general solution — generic executor and judge agent
 - **BLOCKER**: No git user.name/user.email configured — `git commit` will fail. Entrypoint must set this.
 - No Claude Code plugins or settings beyond CLAUDE.md
 - Python 3.11.2, pytest 7.2.1, git, curl, jq available in container
+- Claude Code 2.1.85 supports `--resume <session-id>` for session resumption and `--fork-session` for branching from a resume point
+- Claude Code supports `--json-schema` for structured output validation — controller can enforce verdict format from judge (solves verdict parsing)
+- Claude Code supports `--no-session-persistence` to disable session file saving
+- Session files not yet present in container — created on first execution, location TBD
 
 ### Known Unknowns (we need to figure out)
 
@@ -43,7 +47,7 @@ Make vafi agents work as a general solution — generic executor and judge agent
 - How does the executor handle repos it's never seen? Cold start with no CLAUDE.md, no conventions, no context.
 - What's the minimum task spec that produces reliable results?
 - How much of the methodology is actually needed vs what the model figures out on its own?
-- How does the judge extract a structured verdict (approved/changes_requested + reason) from harness output?
+- ~~How does the judge extract a structured verdict (approved/changes_requested + reason) from harness output?~~ **Resolved**: `--json-schema` flag enforces structured output. Controller passes verdict schema, gets guaranteed JSON.
 - Does `--depth 1` shallow clone give the judge enough context to review? It can read files but has no git history beyond the clone point + executor commits.
 
 ### Unknown Knowns (experience we haven't formalized)
