@@ -1,50 +1,32 @@
-.PHONY: provision k3s os build push deploy secrets seed smoke-test all help
-
-ANSIBLE_DIR := ansible
-INVENTORY := $(ANSIBLE_DIR)/inventory/dev.yml
+.PHONY: build build-base build-claude push test helm-template helm-lint help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-# --- Server Provisioning ---
-
-provision: ## Full server provisioning (OS + k3s)
-	cd $(ANSIBLE_DIR) && ansible-playbook playbooks/site.yml -i inventory/dev.yml
-
-k3s: ## k3s install/update only
-	cd $(ANSIBLE_DIR) && ansible-playbook playbooks/k3s.yml -i inventory/dev.yml
-
-os: ## OS configuration only
-	cd $(ANSIBLE_DIR) && ansible-playbook playbooks/os.yml -i inventory/dev.yml
-
 # --- Container Images ---
 
-build: ## Build all container image layers
+build: ## Build agent image (fast — uses pinned base/claude)
 	./scripts/build-images.sh
 
-push: ## Import images to k3s host
+build-base: ## Rebuild base image layer (Node + system tools)
+	./scripts/build-images.sh --base-only
+
+build-claude: ## Rebuild claude image layer (Claude CLI + cxtx)
+	./scripts/build-images.sh --claude-only
+
+push: ## Push images to registry
 	./scripts/push-images.sh
 
-# --- Kubernetes ---
+# --- Testing ---
 
-deploy: ## Apply k8s manifests to cluster
-	./scripts/deploy.sh
+test: ## Run controller unit tests
+	python -m pytest tests/ -v
 
-redeploy: build push deploy ## Build, push, deploy, and restart
-	./scripts/deploy.sh --restart
+# --- Helm Chart ---
 
-secrets: ## Create k8s secrets from local credentials
-	./scripts/create-secrets.sh
+helm-template: ## Render chart with default values
+	helm template vafi charts/vafi/
 
-seed: ## Seed vtf with admin user and test data
-	./scripts/seed-vtf.sh
-
-smoke-test: ## Run executor smoke test (creates task, watches execution)
-	./scripts/smoke-test.sh
-
-# --- Combo ---
-
-all: build push deploy seed ## Build, push, deploy, and seed everything
-
-first-deploy: secrets deploy ## First-time deploy (secrets + manifests)
+helm-lint: ## Validate chart
+	helm lint charts/vafi/
