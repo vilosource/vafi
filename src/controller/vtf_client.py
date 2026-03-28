@@ -312,6 +312,23 @@ class VtfClient:
 
         return response.json()
 
+    async def update_agent(self, agent_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Update agent fields.
+
+        Args:
+            agent_id: Agent ID to update
+            data: Fields to update (e.g., last_heartbeat, status)
+
+        Returns:
+            Updated agent data
+        """
+        url = f"{self.base_url}/v1/agents/{agent_id}/"
+
+        response = await self._client.patch(url, json=data, headers=self._headers())
+        self._handle_error(response)
+
+        return response.json()
+
     async def submit_task(self, task_id: str) -> None:
         """Submit a task from draft to todo status.
 

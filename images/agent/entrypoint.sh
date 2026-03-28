@@ -22,4 +22,4 @@ mkdir -p "$VF_SESSIONS_DIR"
 
 # Start the controller
 echo "Starting vafi controller..."
-exec python -m controller
+exec python3 -m controller

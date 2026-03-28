@@ -1,0 +1,41 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cxdb-ingress
+  namespace: vafi-agents
+  labels:
+    app.kubernetes.io/name: cxdb-server
+    app.kubernetes.io/component: trace-store
+    app.kubernetes.io/part-of: vafi
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: cxdb.dev.viloforge.com
+      http:
+        paths:
+          - backend:
+              service:
+                name: cxdb-server
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+    - host: cxdb.viloforge.com
+      http:
+        paths:
+          - backend:
+              service:
+                name: cxdb-server
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+  tls:
+    - hosts:
+        - cxdb.dev.viloforge.com
+        - cxdb.viloforge.com
+      secretName: cxdb-tls

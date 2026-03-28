@@ -71,6 +71,25 @@ class WorkSource(Protocol):
         """
         ...
 
+    async def agent_heartbeat(self, agent_id: str) -> None:
+        """Send agent-level heartbeat to signal the agent is alive.
+
+        Separate from task heartbeat. Runs continuously regardless of whether
+        a task is being executed.
+
+        Args:
+            agent_id: Agent ID sending the heartbeat
+        """
+        ...
+
+    async def set_agent_offline(self, agent_id: str) -> None:
+        """Mark agent as offline during graceful shutdown.
+
+        Args:
+            agent_id: Agent ID going offline
+        """
+        ...
+
     async def complete(self, task_id: str, result: ExecutionResult) -> None:
         """Mark a task as completed with execution results.
 
@@ -122,6 +141,16 @@ class WorkSource(Protocol):
 
         Returns:
             Number of times the task has been rejected for changes
+        """
+        ...
+
+    async def add_note(self, task_id: str, text: str, actor_id: str) -> None:
+        """Add a note to a task.
+
+        Args:
+            task_id: Task ID
+            text: Note content
+            actor_id: ID of the actor adding the note
         """
         ...
 

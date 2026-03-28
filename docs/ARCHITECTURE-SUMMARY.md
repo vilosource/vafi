@@ -76,12 +76,46 @@ draft -> todo -> doing -> [pending_completion_review -> done | changes_requested
 
 ## Infrastructure
 
-- **k8s cluster**: k3s on vafi-1.dev.viloforge.com (192.168.2.90)
-- **Namespaces**: vafi-system (vtf, registry), vafi-agents (executor pods)
-- **Registry**: 192.168.2.90:30500 (internal, NodePort)
-- **Images**: vafi-base (python 3.11), vafi-claude (+ Claude Code), vtf (Django API + React SPA)
-- **vtf access from pods**: vtf-api.vafi-system.svc.cluster.local:8000
-- **vtf access from dev**: kubectl port-forward svc/vtf-api 8002:8000
+- **k8s cluster**: k3s on fuji (192.168.2.91)
+- **Registry**: harbor.viloforge.com (Harbor, in-cluster)
+- **Images**: vafi-base → vafi-claude → vafi-agent (three-layer chain)
+- **Namespaces**:
+  - `vtf-prod` — vtf production (vtf.viloforge.com), the orchestrator
+  - `vtf-dev` — vtf development (vtf.dev.viloforge.com), target for vtf changes
+  - `vafi-agents` — executor/judge pods, one pool connected to vtf-prod
+  - `vafi-prod` — vafi control plane (future)
+- **vtf access from pods**: vtf-api.vtf-prod.svc.cluster.local:8000
+- **vtf access from dev laptop**: https://vtf.viloforge.com
+
+## Executor deployment model
+
+One pool, one orchestrator. Like GitLab runners — there's one set of runners connected to one server.
+
+```
+executor-pool (vafi-agents)  --->  vtf-prod (orchestrator)
+                                       |
+                                  tasks reference
+                                       |
+                                  project repos (GitHub)
+```
+
+### Steady state
+
+The `executor-pool` deployment in `vafi-agents` connects to **vtf-prod**. It polls for tasks, claims them, executes, reports back. This is the only permanent pool.
+
+### Developing the executor
+
+When changing controller code, images, or configuration:
+
+1. `make build && make push` — build and push new images to harbor
+2. `make smoke-test` — spins up an **ephemeral pod** connected to **vtf-dev**, submits a test task, watches execution, cleans up
+3. If smoke test passes, promote: `make deploy --restart` to roll the new image into the stable pool
+
+The smoke test never touches vtf-prod. The stable pool is never disrupted during development.
+
+### Why not two pools?
+
+vtf-dev is a **target application** (where agents deploy vtf changes), not a dev orchestrator. The dev/prod split is in the vtf instance, not the executor pool. Having two permanent pools would conflate "which vtf instance to talk to" with "which executor code to run."
 
 ## Key decisions
 

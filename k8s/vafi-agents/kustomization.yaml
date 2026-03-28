@@ -5,7 +5,10 @@ namespace: vafi-agents
 
 resources:
   - sessions-pvc.yaml
-  - secrets.yaml
+  - cxdb-statefulset.yaml
+  - cxdb-service.yaml
+  - cxdb-ingress.yaml
+  # secrets.yaml is a reference only - create secrets out-of-band with real values
   - executor-pool.yaml
 
 commonLabels:

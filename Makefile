@@ -1,4 +1,4 @@
-.PHONY: provision k3s os build push deploy seed all help
+.PHONY: provision k3s os build push deploy secrets seed smoke-test all help
 
 ANSIBLE_DIR := ansible
 INVENTORY := $(ANSIBLE_DIR)/inventory/dev.yml
@@ -31,9 +31,20 @@ push: ## Import images to k3s host
 deploy: ## Apply k8s manifests to cluster
 	./scripts/deploy.sh
 
+redeploy: build push deploy ## Build, push, deploy, and restart
+	./scripts/deploy.sh --restart
+
+secrets: ## Create k8s secrets from local credentials
+	./scripts/create-secrets.sh
+
 seed: ## Seed vtf with admin user and test data
 	./scripts/seed-vtf.sh
+
+smoke-test: ## Run executor smoke test (creates task, watches execution)
+	./scripts/smoke-test.sh
 
 # --- Combo ---
 
 all: build push deploy seed ## Build, push, deploy, and seed everything
+
+first-deploy: secrets deploy ## First-time deploy (secrets + manifests)

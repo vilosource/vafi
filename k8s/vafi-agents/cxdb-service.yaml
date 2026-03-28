@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cxdb-server
+  namespace: vafi-agents
+  labels:
+    app.kubernetes.io/name: cxdb-server
+    app.kubernetes.io/component: trace-store
+    app.kubernetes.io/part-of: vafi
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: cxdb-server

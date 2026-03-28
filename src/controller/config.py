@@ -26,6 +26,9 @@ class AgentConfig:
 
     sessions_dir: str = "/sessions"
 
+    cxdb_url: str = ""
+    cxdb_public_url: str = ""
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         tags_str = os.environ.get("VF_AGENT_TAGS", "executor")
@@ -43,6 +46,8 @@ class AgentConfig:
             max_turns=int(os.environ.get("VF_MAX_TURNS", "50")),
             heartbeat_interval=int(os.environ.get("VF_HEARTBEAT_INTERVAL", "300")),
             sessions_dir=os.environ.get("VF_SESSIONS_DIR", "/sessions"),
+            cxdb_url=os.environ.get("VF_CXDB_URL", ""),
+            cxdb_public_url=os.environ.get("VF_CXDB_PUBLIC_URL", ""),
         )
 
     def display(self) -> str:
@@ -59,5 +64,7 @@ class AgentConfig:
             f"  max_turns:          {self.max_turns}",
             f"  heartbeat_interval: {self.heartbeat_interval}s",
             f"  sessions_dir:       {self.sessions_dir}",
+            f"  cxdb_url:          {self.cxdb_url or '(disabled)'}",
+            f"  cxdb_public_url:   {self.cxdb_public_url or '(same as cxdb_url)'}",
         ]
         return "\n".join(lines)

@@ -10,9 +10,11 @@ import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
+
 from .config import AgentConfig
 from .gates import GateRunner
-from .heartbeat import heartbeat_loop
+from .heartbeat import agent_heartbeat_loop, heartbeat_loop
 from .invoker import HarnessInvoker
 from .prompt import load_template, render_prompt
 from .types import ExecutionResult
@@ -47,11 +49,14 @@ class Controller:
     async def run(self) -> None:
         """Main controller loop.
 
-        Registers with the work source, then polls for work, claims tasks,
-        and logs what would be executed. Handles graceful shutdown.
+        Registers with the work source, then starts the agent heartbeat loop
+        and polls for work. The agent heartbeat runs continuously (every 30s)
+        to signal liveness to vtf. On shutdown, marks the agent offline.
         """
         # Set up signal handlers for graceful shutdown
         self._setup_signal_handlers()
+
+        agent_hb_task = None
 
         try:
             # Register with work source
@@ -61,6 +66,16 @@ class Controller:
                 tags=self.config.agent_tags
             )
             logger.info(f"Registered as agent {self._agent_info.id}")
+
+            # Start agent-level heartbeat loop (runs always, independent of tasks)
+            agent_hb_task = asyncio.create_task(
+                agent_heartbeat_loop(
+                    self.work_source,
+                    self._agent_info.id,
+                    self.config.poll_interval,
+                )
+            )
+            logger.info("Started agent heartbeat loop")
 
             # Main polling loop
             logger.info("Starting poll loop...")
@@ -86,6 +101,22 @@ class Controller:
         except Exception as e:
             logger.error(f"Fatal error in controller: {e}", exc_info=True)
         finally:
+            # Stop agent heartbeat loop
+            if agent_hb_task is not None:
+                agent_hb_task.cancel()
+                try:
+                    await agent_hb_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Signal offline to vtf
+            if self._agent_info:
+                try:
+                    await self.work_source.set_agent_offline(self._agent_info.id)
+                    logger.info(f"Agent {self._agent_info.id} marked offline")
+                except Exception as e:
+                    logger.warning(f"Failed to mark agent offline: {e}")
+
             logger.info("Shutting down controller")
 
     async def _poll_and_process(self) -> None:
@@ -115,6 +146,9 @@ class Controller:
 
             # Execute the task
             result = await self.execute(claimed_task)
+
+            # Link execution trace from cxdb (best-effort)
+            await self._post_trace_note(task.id)
 
             # Report result
             if result.success:
@@ -261,6 +295,41 @@ class Controller:
         for i, line in enumerate(task.spec.split('\n'), 1):
             logger.info(f"{i:3}: {line}")
         logger.info("=== End Task Details ===")
+
+    async def _post_trace_note(self, task_id: str) -> None:
+        """Look up the cxdb context for a task and post its URL as a vtf note."""
+        if not self.config.cxdb_url:
+            return
+
+        try:
+            context_id = await self._lookup_cxdb_context(task_id)
+            if context_id is not None:
+                base = self.config.cxdb_public_url or self.config.cxdb_url
+                trace_url = f"{base}/c/{context_id}"
+                await self.work_source.add_note(
+                    task_id, f"vafi:trace_url={trace_url}", "controller"
+                )
+                logger.info(f"Posted trace link for task {task_id}: {trace_url}")
+            else:
+                logger.debug(f"No cxdb context found for task {task_id}")
+        except Exception as e:
+            logger.warning(f"Failed to post trace note for task {task_id}: {e}")
+
+    async def _lookup_cxdb_context(self, task_id: str) -> int | None:
+        """Query cxdb for a context matching task:<task_id> label."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.config.cxdb_url}/v1/contexts",
+                params={"limit": "50"},
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            label = f"task:{task_id}"
+            for ctx in data.get("contexts", []):
+                if label in ctx.get("labels", []):
+                    return ctx["context_id"]
+        return None
 
     def _setup_signal_handlers(self) -> None:
         """Set up signal handlers for graceful shutdown."""

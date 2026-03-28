@@ -21,6 +21,8 @@ class MockWorkSource:
         self.claim = AsyncMock()
         self.fail = AsyncMock()
         self.heartbeat = AsyncMock()
+        self.agent_heartbeat = AsyncMock()
+        self.set_agent_offline = AsyncMock()
         self.complete = AsyncMock()
         self.get_repo_info = AsyncMock()
         self.get_rework_context = AsyncMock()
@@ -193,3 +195,45 @@ class TestController:
 
         # Should exit cleanly
         assert controller._shutdown.is_set()
+
+    @pytest.mark.asyncio
+    async def test_marks_agent_offline_on_shutdown(self, mock_work_source, test_config, sample_agent):
+        """Test that controller marks agent offline on graceful shutdown."""
+        mock_work_source.register.return_value = sample_agent
+        mock_work_source.poll.return_value = None
+
+        controller = Controller(mock_work_source, test_config)
+
+        async def trigger_shutdown():
+            await asyncio.sleep(0.05)
+            controller._shutdown.set()
+
+        await asyncio.gather(
+            controller.run(),
+            trigger_shutdown()
+        )
+
+        mock_work_source.set_agent_offline.assert_called_once_with("agent-123")
+
+    @pytest.mark.asyncio
+    async def test_agent_heartbeat_runs_during_idle(self, mock_work_source, test_config, sample_agent):
+        """Test that agent heartbeat fires while polling idle."""
+        mock_work_source.register.return_value = sample_agent
+        mock_work_source.poll.return_value = None
+
+        # Use short poll interval so heartbeat fires
+        test_config.poll_interval = 0.05
+
+        controller = Controller(mock_work_source, test_config)
+
+        async def trigger_shutdown():
+            await asyncio.sleep(0.15)
+            controller._shutdown.set()
+
+        await asyncio.gather(
+            controller.run(),
+            trigger_shutdown()
+        )
+
+        # Agent heartbeat should have fired at least once
+        assert mock_work_source.agent_heartbeat.call_count >= 1

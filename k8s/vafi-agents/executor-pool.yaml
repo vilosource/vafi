@@ -48,7 +48,7 @@ spec:
           image: harbor.viloforge.com/vafi/vafi-agent:latest
           imagePullPolicy: Always
           securityContext:
-            runAsUser: 1000
+            runAsUser: 1001
             runAsNonRoot: true
           env:
             # Agent identity
@@ -61,7 +61,7 @@ spec:
 
             # vtf integration
             - name: VF_VTF_API_URL
-              value: "http://vtf-api.vafi-system.svc.cluster.local:8000"
+              value: "http://vtf-api.vtf-dev.svc.cluster.local:8000"
             - name: VF_VTF_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -83,6 +83,12 @@ spec:
             # Sessions storage
             - name: VF_SESSIONS_DIR
               value: "/sessions"
+
+            # cxdb trace collection (empty = disabled)
+            - name: VF_CXDB_URL
+              value: "http://cxdb-server:80"
+            - name: VF_CXDB_PUBLIC_URL
+              value: "https://cxdb.viloforge.com"
 
             # Claude API credentials (z.ai)
             - name: ANTHROPIC_AUTH_TOKEN
@@ -116,7 +122,7 @@ spec:
               command:
                 - /bin/bash
                 - -c
-                - "pgrep -f 'python -m controller'"
+                - "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q 'python3 -m controller'"
             initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 5
@@ -127,7 +133,7 @@ spec:
               command:
                 - /bin/bash
                 - -c
-                - "pgrep -f 'python -m controller'"
+                - "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q 'python3 -m controller'"
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5

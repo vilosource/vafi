@@ -363,3 +363,107 @@ class TestHarnessInvoker:
             harness_args = mock_subprocess.call_args[0]
             assert "--max-turns" in harness_args
             assert str(test_config.max_turns) in harness_args
+
+    @pytest.mark.asyncio
+    async def test_cxtx_wrapping_when_cxdb_configured(self, sample_task, sample_repo, temp_workdir):
+        """Test that claude is wrapped with cxtx when VF_CXDB_URL is set."""
+        config = AgentConfig(
+            agent_id="test-cxtx",
+            task_timeout=30,
+            max_turns=10,
+            sessions_dir="/tmp/test-sessions",
+            cxdb_url="http://cxdb-server:9010",
+        )
+        invoker = HarnessInvoker(config)
+
+        with patch('controller.invoker.subprocess.run') as mock_git, \
+             patch('controller.invoker.asyncio.create_subprocess_exec') as mock_subprocess:
+
+            mock_git.return_value = Mock(returncode=0, stderr="", stdout="")
+
+            mock_process = Mock()
+            mock_process.returncode = 0
+            async def mock_communicate():
+                return ('{"result": "test", "is_error": false}', "")
+            mock_process.communicate = mock_communicate
+            mock_subprocess.return_value = mock_process
+
+            await invoker.invoke(sample_task, sample_repo, temp_workdir, "test prompt")
+
+            harness_args = mock_subprocess.call_args[0]
+            assert harness_args[0] == "cxtx"
+            assert harness_args[1] == "--url"
+            assert harness_args[2] == "http://cxdb-server:9010"
+            assert harness_args[3] == "--label"
+            assert harness_args[4] == "task:test-task-123"
+            assert harness_args[5] == "claude"
+            assert harness_args[6] == "--"
+            assert "-p" in harness_args
+            assert "--output-format" in harness_args
+
+    @pytest.mark.asyncio
+    async def test_no_cxtx_when_cxdb_not_configured(self, sample_task, sample_repo, temp_workdir):
+        """Test that plain claude is used when VF_CXDB_URL is empty."""
+        config = AgentConfig(
+            agent_id="test-no-cxtx",
+            task_timeout=30,
+            max_turns=10,
+            sessions_dir="/tmp/test-sessions",
+            cxdb_url="",
+        )
+        invoker = HarnessInvoker(config)
+
+        with patch('controller.invoker.subprocess.run') as mock_git, \
+             patch('controller.invoker.asyncio.create_subprocess_exec') as mock_subprocess:
+
+            mock_git.return_value = Mock(returncode=0, stderr="", stdout="")
+
+            mock_process = Mock()
+            mock_process.returncode = 0
+            async def mock_communicate():
+                return ('{"result": "test", "is_error": false}', "")
+            mock_process.communicate = mock_communicate
+            mock_subprocess.return_value = mock_process
+
+            await invoker.invoke(sample_task, sample_repo, temp_workdir, "test prompt")
+
+            harness_args = mock_subprocess.call_args[0]
+            assert harness_args[0] == "claude"
+            assert "cxtx" not in harness_args
+
+    @pytest.mark.asyncio
+    async def test_cxtx_with_max_turns(self, sample_task, sample_repo, temp_workdir):
+        """Test that max_turns appears after -- in cxtx-wrapped command."""
+        config = AgentConfig(
+            agent_id="test-cxtx-turns",
+            task_timeout=30,
+            max_turns=25,
+            sessions_dir="/tmp/test-sessions",
+            cxdb_url="http://cxdb-server:9010",
+        )
+        invoker = HarnessInvoker(config)
+
+        with patch('controller.invoker.subprocess.run') as mock_git, \
+             patch('controller.invoker.asyncio.create_subprocess_exec') as mock_subprocess:
+
+            mock_git.return_value = Mock(returncode=0, stderr="", stdout="")
+
+            mock_process = Mock()
+            mock_process.returncode = 0
+            async def mock_communicate():
+                return ('{"result": "test", "is_error": false}', "")
+            mock_process.communicate = mock_communicate
+            mock_subprocess.return_value = mock_process
+
+            await invoker.invoke(sample_task, sample_repo, temp_workdir, "test prompt")
+
+            harness_args = list(mock_subprocess.call_args[0])
+            separator_idx = harness_args.index("--")
+            max_turns_idx = harness_args.index("--max-turns")
+            label_idx = harness_args.index("--label")
+            # label must appear before -- separator
+            assert label_idx < separator_idx
+            assert "task:test-task-123" in harness_args[label_idx + 1]
+            # max-turns must appear after the -- separator
+            assert max_turns_idx > separator_idx
+            assert harness_args[max_turns_idx + 1] == "25"

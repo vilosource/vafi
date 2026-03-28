@@ -165,17 +165,25 @@ class HarnessInvoker:
             subprocess.TimeoutExpired: If harness exceeds task timeout
             FileNotFoundError: If claude CLI is not available
         """
-        # Build claude command with required flags
-        cmd = [
-            "claude",
+        # Build claude args
+        claude_args = [
             "-p", prompt,
             "--output-format", "json",
             "--dangerously-skip-permissions"
         ]
-
-        # Add optional limits from config
         if self.config.max_turns > 0:
-            cmd.extend(["--max-turns", str(self.config.max_turns)])
+            claude_args.extend(["--max-turns", str(self.config.max_turns)])
+
+        # Wrap with cxtx if cxdb is configured
+        if self.config.cxdb_url:
+            cmd = [
+                "cxtx",
+                "--url", self.config.cxdb_url,
+                "--label", f"task:{task_id}",
+                "claude", "--",
+            ] + claude_args
+        else:
+            cmd = ["claude"] + claude_args
 
         logger.info(f"Starting harness for task {task_id} with timeout {self.config.task_timeout}s")
         logger.debug(f"Harness command: {' '.join(cmd)}")

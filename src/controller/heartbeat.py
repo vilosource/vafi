@@ -1,7 +1,9 @@
-"""Heartbeat mechanism for vafi task execution.
+"""Heartbeat mechanisms for vafi controller.
 
-The heartbeat coroutine runs concurrently with harness execution to keep
-task claims alive in vtf by periodically calling the heartbeat API.
+Two separate heartbeat concerns:
+- agent_heartbeat_loop: Agent-level liveness signal (am I alive?). Runs always.
+- heartbeat_loop: Task-level claim keepalive (am I still working on this task?).
+  Runs only during task execution.
 """
 
 import asyncio
@@ -12,6 +14,38 @@ if TYPE_CHECKING:
     from .worksources.protocol import WorkSource
 
 logger = logging.getLogger(__name__)
+
+
+async def agent_heartbeat_loop(
+    work_source: "WorkSource",
+    agent_id: str,
+    interval_seconds: int,
+) -> None:
+    """Send periodic agent-level heartbeats to signal liveness.
+
+    Runs as a background asyncio task for the lifetime of the controller.
+    Independent of task execution — beats whether idle or busy.
+
+    Args:
+        work_source: WorkSource implementation for heartbeat calls
+        agent_id: Agent ID to heartbeat for
+        interval_seconds: Seconds between heartbeat calls
+    """
+    logger.info(f"Starting agent heartbeat loop (interval={interval_seconds}s)")
+
+    try:
+        while True:
+            try:
+                await work_source.agent_heartbeat(agent_id)
+                logger.debug(f"Agent heartbeat sent for {agent_id}")
+            except Exception as e:
+                logger.warning(f"Agent heartbeat failed: {e}")
+
+            await asyncio.sleep(interval_seconds)
+
+    except asyncio.CancelledError:
+        logger.info("Agent heartbeat loop stopped")
+        raise
 
 
 async def heartbeat_loop(work_source: "WorkSource", task_id: str, interval_seconds: int) -> None:

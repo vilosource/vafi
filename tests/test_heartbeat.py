@@ -1,6 +1,6 @@
 """Tests for heartbeat functionality in vafi controller.
 
-These tests verify the heartbeat coroutine behavior during task execution,
+These tests verify both agent-level and task-level heartbeat behavior,
 including proper cancellation and error handling.
 """
 
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.controller.heartbeat import heartbeat_loop
+from src.controller.heartbeat import agent_heartbeat_loop, heartbeat_loop
 
 
 class TestHeartbeatLoop:
@@ -217,3 +217,86 @@ class TestHeartbeatLoop:
         # With zero interval, should send many heartbeats very quickly
         # But we can't predict exact count due to asyncio scheduling
         assert mock_work_source.heartbeat.call_count > 0
+
+
+class TestAgentHeartbeatLoop:
+    """Test the agent_heartbeat_loop function behavior."""
+
+    @pytest.fixture
+    def mock_work_source(self):
+        """Create a mock WorkSource for testing."""
+        work_source = Mock()
+        work_source.agent_heartbeat = AsyncMock()
+        work_source.set_agent_offline = AsyncMock()
+        return work_source
+
+    @pytest.mark.asyncio
+    async def test_sends_periodic_heartbeats(self, mock_work_source):
+        """Test that agent heartbeat loop sends heartbeats at the configured interval."""
+        agent_id = "agent-123"
+        interval = 0.05  # 50ms for fast test
+
+        task = asyncio.create_task(
+            agent_heartbeat_loop(mock_work_source, agent_id, interval)
+        )
+
+        # Let it run for ~175ms to get 3-4 heartbeats
+        # First heartbeat fires immediately, then every 50ms after sleep
+        await asyncio.sleep(0.175)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert mock_work_source.agent_heartbeat.call_count >= 3
+        for call in mock_work_source.agent_heartbeat.call_args_list:
+            assert call[0][0] == agent_id
+
+    @pytest.mark.asyncio
+    async def test_continues_on_error(self, mock_work_source, caplog):
+        """Test that agent heartbeat loop continues running after transient errors."""
+        agent_id = "agent-456"
+        interval = 0.05
+
+        call_count = 0
+        async def sometimes_fails(aid):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise Exception("Transient failure")
+
+        mock_work_source.agent_heartbeat.side_effect = sometimes_fails
+
+        task = asyncio.create_task(
+            agent_heartbeat_loop(mock_work_source, agent_id, interval)
+        )
+
+        await asyncio.sleep(0.2)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Should have continued past the failure
+        assert call_count >= 3
+        assert any("Agent heartbeat failed" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_cancellation_is_clean(self, mock_work_source, caplog):
+        """Test that agent heartbeat loop cancellation logs properly."""
+        agent_id = "agent-789"
+        interval = 0.1
+
+        with caplog.at_level(logging.INFO):
+            task = asyncio.create_task(
+                agent_heartbeat_loop(mock_work_source, agent_id, interval)
+            )
+
+            await asyncio.sleep(0.05)
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert any("Starting agent heartbeat loop" in r.message for r in caplog.records)
+        assert any("Agent heartbeat loop stopped" in r.message for r in caplog.records)
