@@ -286,10 +286,19 @@ _Updated as spikes are executed._
   - Stale test data in pending_completion_review was a nuisance — judge picks up whatever is in queue (no project filtering yet)
 
 ### Spike 3: Rework flow
-- Date: TBD
-- Result: TBD
-- CXDB trace: TBD
-- Learnings: TBD
+- Date: 2026-03-28
+- Result: **PARTIAL — mechanics work, feedback not incorporated**
+- CXDB traces: ctx=6 (executor), ctx=7 (executor rework), ctx=8 (judge)
+- Task: LXW4kH2g2g-QS8ienjd1r (vtf-dev)
+- Learnings:
+  - The mechanical flow works: `changes_requested → doing → pending_completion_review → done`
+  - Executor reclaimed the task and ran in the existing workdir
+  - **PROBLEM**: Executor did NOT read the judge feedback. The controller sends the same prompt for rework as for new work — no feedback injected.
+  - **PROBLEM**: Judge approved the rework despite the requested fix (division by zero handling) NOT being implemented. The judge didn't cross-reference the previous rejection.
+  - The divide function has no division-by-zero guard despite the rejection specifically requesting it.
+  - Root cause: the executor has no way to know it's doing rework. The prompt is identical. The workdir already has the code from attempt 1, so the executor sees "nothing to do" and completes.
+  - Root cause for judge: the judge reviewed the code against the spec only, not against the previous rejection. The spec didn't require division-by-zero, so the judge approved.
+  - **Decision needed**: Should the controller inject judge feedback into the rework prompt? Or should the executor/judge query vtf for reviews themselves?
 
 ### Spike 4: Minimal methodology
 - Date: TBD
