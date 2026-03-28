@@ -64,10 +64,9 @@ class VtfWorkSource:
         Returns:
             Next task to execute, or None if no work available
         """
-        # Priority 1: Check for rework assigned to this agent
+        # Priority 1: Check for rework (any changes_requested task)
         rework_tasks = await self._client.list_tasks(
             status="changes_requested",
-            assigned_to=agent_id,
             expand=["reviews"]
         )
         if rework_tasks:
@@ -103,6 +102,24 @@ class VtfWorkSource:
             task_id: Task ID being executed
         """
         await self._client.heartbeat(task_id)
+
+    async def agent_heartbeat(self, agent_id: str) -> None:
+        """Send agent-level heartbeat to signal the agent is alive.
+
+        Args:
+            agent_id: Agent ID sending the heartbeat
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        await self._client.update_agent(agent_id, {"last_heartbeat": now})
+
+    async def set_agent_offline(self, agent_id: str) -> None:
+        """Mark agent as offline during graceful shutdown.
+
+        Args:
+            agent_id: Agent ID going offline
+        """
+        await self._client.update_agent(agent_id, {"status": "offline"})
 
     async def complete(self, task_id: str, result: ExecutionResult) -> None:
         """Mark a task as completed with execution results.
@@ -163,6 +180,16 @@ class VtfWorkSource:
 
         # Fail the task
         await self._client.fail_task(task_id)
+
+    async def add_note(self, task_id: str, text: str, actor_id: str) -> None:
+        """Add a note to a task.
+
+        Args:
+            task_id: Task ID
+            text: Note content
+            actor_id: ID of the actor adding the note
+        """
+        await self._client.add_note(task_id=task_id, text=text, actor_id=actor_id)
 
     async def get_repo_info(self, project_id: str) -> RepoInfo:
         """Get repository information for a project.
