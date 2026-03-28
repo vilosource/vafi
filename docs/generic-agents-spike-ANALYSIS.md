@@ -25,6 +25,10 @@ Make vafi agents work as a general solution — generic executor and judge agent
 - No MCP tools in container — harness runs headless, controller handles all vtf API calls
 - Controller prompt template is minimal (4 lines: title, id, spec, test_command)
 - `VF_AGENT_ROLE` config flag exists and is read from env, but controller logic does not branch on it yet
+- Repo cloned with `--depth 1 --single-branch` — workdir has one history commit plus executor's commits. No full repo history available.
+- No task branch created — executor commits directly to the default branch in the workdir
+- Each task gets its own workdir (`/sessions/task-<id>/`), only one agent can claim a task at a time — no concurrent access
+- Judge enters the same workdir as executor — can see commits via `git log`, changed files via `git diff HEAD~N..HEAD`
 
 ### Known Unknowns (we need to figure out)
 
@@ -36,6 +40,7 @@ Make vafi agents work as a general solution — generic executor and judge agent
 - What's the minimum task spec that produces reliable results?
 - How much of the methodology is actually needed vs what the model figures out on its own?
 - How does the judge extract a structured verdict (approved/changes_requested + reason) from harness output?
+- Does `--depth 1` shallow clone give the judge enough context to review? It can read files but has no git history beyond the clone point + executor commits.
 
 ### Unknown Knowns (experience we haven't formalized)
 
