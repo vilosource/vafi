@@ -81,6 +81,23 @@ class VtfWorkSource:
 
         return None
 
+    async def poll_reviews(self, agent_id: str) -> TaskInfo | None:
+        """Poll for tasks pending completion review (judge work).
+
+        Args:
+            agent_id: ID of the polling agent
+
+        Returns:
+            Next task to review, or None if no reviews pending
+        """
+        review_tasks = await self._client.list_tasks(
+            status="pending_completion_review",
+        )
+        if review_tasks:
+            task_data = review_tasks[0]
+            return self._task_data_to_info(task_data)
+        return None
+
     async def claim(self, task_id: str, agent_id: str) -> TaskInfo:
         """Claim a task for execution.
 

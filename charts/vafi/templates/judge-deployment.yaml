@@ -1,0 +1,89 @@
+{{- if gt (int .Values.judge.replicas) 0 }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vafi.fullname" . }}-judge
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "judge") | nindent 4 }}
+spec:
+  replicas: {{ .Values.judge.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vafi.selectorLabels" (dict "root" . "component" "judge") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vafi.labels" . | nindent 8 }}
+        {{- include "vafi.selectorLabels" (dict "root" . "component" "judge") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: setup-ssh
+          image: "{{ .Values.image.base.repository }}:{{ .Values.image.base.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              cp /ssh-secret/ssh-privatekey /ssh-ready/id_ed25519
+              cp /ssh-secret/ssh-publickey /ssh-ready/id_ed25519.pub
+              chmod 600 /ssh-ready/id_ed25519
+              chmod 644 /ssh-ready/id_ed25519.pub
+              echo "StrictHostKeyChecking no" > /ssh-ready/config
+              chmod 644 /ssh-ready/config
+          volumeMounts:
+            - name: ssh-secret
+              mountPath: /ssh-secret
+              readOnly: true
+            - name: ssh-ready
+              mountPath: /ssh-ready
+      containers:
+        - name: vafi-agent
+          image: "{{ .Values.image.agent.repository }}:{{ .Values.image.agent.tag }}"
+          imagePullPolicy: {{ .Values.image.agent.pullPolicy }}
+          securityContext:
+            runAsUser: 1001
+            runAsNonRoot: true
+          env:
+            {{- include "vafi.judgeEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: sessions
+              mountPath: {{ .Values.judge.sessionsDir }}
+            - name: ssh-ready
+              mountPath: /home/agent/.ssh
+          resources:
+            {{- toYaml .Values.judge.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q 'python3 -m controller'"
+            initialDelaySeconds: {{ .Values.judge.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.judge.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.judge.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.judge.readinessProbe.failureThreshold }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q 'python3 -m controller'"
+            initialDelaySeconds: {{ .Values.judge.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.judge.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.judge.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.judge.livenessProbe.failureThreshold }}
+      volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: {{ include "vafi.fullname" . }}-sessions
+        - name: ssh-secret
+          secret:
+            secretName: {{ .Values.sshSecret.name }}
+        - name: ssh-ready
+          emptyDir: {}
+      restartPolicy: Always
+{{- end }}

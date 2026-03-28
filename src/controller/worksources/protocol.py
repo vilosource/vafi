@@ -47,6 +47,17 @@ class WorkSource(Protocol):
         """
         ...
 
+    async def poll_reviews(self, agent_id: str) -> TaskInfo | None:
+        """Poll for tasks pending completion review (judge work).
+
+        Args:
+            agent_id: ID of the polling agent
+
+        Returns:
+            Next task to review, or None if no reviews pending
+        """
+        ...
+
     async def claim(self, task_id: str, agent_id: str) -> TaskInfo:
         """Claim a task for execution.
 

@@ -1,0 +1,9 @@
+Verify the implementation of the following task. Run the tests, review the code, and produce your verdict as JSON.
+
+## Task: {title} ({id})
+
+## Specification
+{spec}
+
+## Test Commands
+{test_command}

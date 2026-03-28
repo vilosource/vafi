@@ -125,7 +125,13 @@ class Controller:
             logger.warning("No agent registration - skipping poll")
             return
 
-        # Poll for work (rework priority, then claimable)
+        if self.config.agent_role == "judge":
+            await self._poll_and_review()
+        else:
+            await self._poll_and_execute()
+
+    async def _poll_and_execute(self) -> None:
+        """Executor: poll for tasks, execute, and report."""
         logger.debug(f"Polling for work (agent_id={self._agent_info.id}, tags={self.config.agent_tags})")
         task = await self.work_source.poll(self._agent_info.id, self.config.agent_tags)
 
@@ -170,11 +176,92 @@ class Controller:
 
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
-            # Task claim might have succeeded, so try to fail it
             try:
                 await self.work_source.fail(task.id, f"error during processing: {str(e)}")
             except Exception:
                 logger.error(f"Failed to fail task {task.id}", exc_info=True)
+
+    async def _poll_and_review(self) -> None:
+        """Judge: poll for tasks pending review, verify, and submit verdict.
+
+        Unlike executors, judges do not claim tasks. They find a task in
+        pending_completion_review, run verification in the shared workdir,
+        and submit a review. The review submission handles state transitions.
+        """
+        logger.debug(f"Polling for reviews (agent_id={self._agent_info.id})")
+        task = await self.work_source.poll_reviews(self._agent_info.id)
+
+        if task is None:
+            logger.debug("No reviews pending")
+            return
+
+        logger.info(f"Found task to review {task.id}: {task.title}")
+
+        try:
+            self._log_task_details(task)
+
+            # Execute judge harness (no claim — judge runs in shared workdir)
+            result = await self.execute(task)
+
+            # Link execution trace from cxdb (best-effort)
+            await self._post_trace_note(task.id)
+
+            # Parse verdict from harness output
+            verdict = self._parse_verdict(result.completion_report)
+
+            # Submit review
+            await self.work_source.submit_review(
+                task.id,
+                verdict["decision"],
+                verdict["reason"],
+                self._agent_info.id,
+            )
+            logger.info(f"Submitted review for task {task.id}: {verdict['decision']}")
+
+        except Exception as e:
+            logger.error(f"Error reviewing task {task.id}: {e}", exc_info=True)
+            # Try to add a note about the failure
+            try:
+                await self.work_source.add_note(
+                    task.id, f"Judge error: {str(e)}", "controller"
+                )
+            except Exception:
+                logger.error(f"Failed to post judge error note for task {task.id}", exc_info=True)
+
+    def _parse_verdict(self, completion_report: str) -> dict:
+        """Parse judge verdict from harness output.
+
+        Extracts JSON verdict from the completion report. Falls back to
+        changes_requested if parsing fails.
+        """
+        import json
+
+        # Try to find JSON in the output
+        try:
+            # The harness may wrap the result — try direct parse first
+            verdict = json.loads(completion_report)
+            if "decision" in verdict:
+                return verdict
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try to find JSON block in the text
+        import re
+        json_match = re.search(r'\{[^{}]*"decision"[^{}]*\}', completion_report, re.DOTALL)
+        if json_match:
+            try:
+                verdict = json.loads(json_match.group())
+                if "decision" in verdict:
+                    return verdict
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: could not parse verdict
+        logger.warning("Could not parse judge verdict from output, defaulting to changes_requested")
+        return {
+            "decision": "changes_requested",
+            "reason": f"Judge output could not be parsed as verdict. Raw output: {completion_report[:500]}",
+        }
 
     async def execute(self, task) -> ExecutionResult:
         """Execute a task using the harness invoker and run verification gates.
@@ -210,11 +297,12 @@ class Controller:
             # Get repo info from work source
             repo_info = await self.work_source.get_repo_info(task.project_id)
 
-            # Load and render prompt template
-            template_path = Path("/opt/vf-agent/templates/task.txt")
+            # Load and render prompt template (judge uses judge.txt, executor uses task.txt)
+            template_name = "judge.txt" if self.config.agent_role == "judge" else "task.txt"
+            template_path = Path(f"/opt/vf-agent/templates/{template_name}")
             # Fallback to local path if container path doesn't exist
             if not template_path.exists():
-                template_path = Path(__file__).parent.parent.parent / "templates" / "task.txt"
+                template_path = Path(__file__).parent.parent.parent / "templates" / template_name
 
             template = load_template(template_path)
             prompt = render_prompt(template, task)

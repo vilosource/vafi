@@ -55,6 +55,37 @@ executor:
     failureThreshold: 3
 
 # ---------------------------------------------------------------------------
+# Judge — AI agent that reviews completed tasks
+# ---------------------------------------------------------------------------
+judge:
+  replicas: 0              # 0 = disabled by default
+  role: judge
+  tags: "judge"
+  agentId: ""
+  pollInterval: 30
+  taskTimeout: 600
+  maxTurns: 50
+  heartbeatInterval: 300
+  sessionsDir: "/sessions"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  readinessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 2
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ---------------------------------------------------------------------------
 # vtf — task tracker API that the executor polls for work
 # ---------------------------------------------------------------------------
 vtf:
