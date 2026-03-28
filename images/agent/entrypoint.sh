@@ -17,6 +17,10 @@ else
     ls -1 /opt/vf-agent/methodologies/ || echo "None found"
 fi
 
+# Configure git identity for commits
+git config --global user.name "vafi-agent"
+git config --global user.email "vafi-agent@noreply.viloforge.com"
+
 # Ensure sessions directory exists
 mkdir -p "$VF_SESSIONS_DIR"
 
