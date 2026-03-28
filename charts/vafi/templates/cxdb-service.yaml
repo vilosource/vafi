@@ -1,0 +1,18 @@
+{{- if .Values.cxdb.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vafi.cxdbName" . }}
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb") | nindent 4 }}
+{{- end }}

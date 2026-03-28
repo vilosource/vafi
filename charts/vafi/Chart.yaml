@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vafi
+description: Viloforge Agentic Fleet Infrastructure — AI agent execution platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

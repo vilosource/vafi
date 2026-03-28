@@ -1,0 +1,70 @@
+{{- if .Values.cxdb.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "vafi.cxdbName" . }}
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb") | nindent 4 }}
+spec:
+  serviceName: {{ include "vafi.cxdbName" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vafi.labels" . | nindent 8 }}
+        {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cxdb
+          image: "{{ .Values.image.cxdb.repository }}:{{ .Values.image.cxdb.tag }}"
+          imagePullPolicy: {{ .Values.image.cxdb.pullPolicy }}
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+          env:
+            - name: CXDB_DATA_DIR
+              value: "/data"
+            - name: CXDB_HTTP_BIND
+              value: "127.0.0.1:9010"
+            - name: CXDB_LOG_LEVEL
+              value: "info"
+          volumeMounts:
+            - name: cxdb-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.cxdb.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /v1/contexts?limit=1
+              port: 80
+            initialDelaySeconds: {{ .Values.cxdb.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.cxdb.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.cxdb.readinessProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /v1/contexts?limit=1
+              port: 80
+            initialDelaySeconds: {{ .Values.cxdb.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.cxdb.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.cxdb.livenessProbe.failureThreshold }}
+  volumeClaimTemplates:
+    - metadata:
+        name: cxdb-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.cxdb.storageClassName }}
+        storageClassName: {{ .Values.cxdb.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.cxdb.storage }}
+{{- end }}

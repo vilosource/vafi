@@ -1,0 +1,17 @@
+{{- if .Values.certificate.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "vafi.fullname" . }}-tls
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.ingress.tls.secretName }}
+  issuerRef:
+    name: {{ .Values.certificate.issuerRef.name }}
+    kind: {{ .Values.certificate.issuerRef.kind }}
+  dnsNames:
+    {{- if .Values.ingress.cxdbHost }}
+    - {{ .Values.ingress.cxdbHost }}
+    {{- end }}
+{{- end }}

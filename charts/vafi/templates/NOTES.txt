@@ -1,0 +1,31 @@
+vafi has been deployed to namespace {{ .Release.Namespace }}.
+
+Executor:
+  Replicas: {{ .Values.executor.replicas }}
+  Role: {{ .Values.executor.role }}
+  Tags: {{ .Values.executor.tags }}
+  VTF API: {{ .Values.vtf.apiUrl }}
+
+{{- if .Values.cxdb.enabled }}
+
+CXDB:
+  Service: {{ include "vafi.cxdbName" . }}
+{{- if .Values.ingress.enabled }}
+  Ingress: https://{{ .Values.ingress.cxdbHost }}
+{{- end }}
+{{- if .Values.cxdb.publicUrl }}
+  Public URL: {{ .Values.cxdb.publicUrl }}
+{{- end }}
+{{- end }}
+
+{{- if not .Values.secrets.existingSecret }}
+
+WARNING: Secrets generated from values. For production, create secrets
+out-of-band and set secrets.existingSecret.
+{{- end }}
+
+Prerequisites:
+  - Secret '{{ .Values.sshSecret.name }}' must exist (SSH keys for git)
+{{- if .Values.secrets.existingSecret }}
+  - Secret '{{ .Values.secrets.existingSecret }}' must exist (API credentials)
+{{- end }}
