@@ -198,6 +198,22 @@ class VtfWorkSource:
         # Fail the task
         await self._client.fail_task(task_id)
 
+    async def get_task_context(self, task_id: str) -> dict:
+        """Get full task data with reviews and notes for context building.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Dict with 'task' (including reviews) and 'notes' keys
+        """
+        task_data = await self._client.get_task(task_id, expand=["reviews"])
+        try:
+            notes = await self._client.list_notes(task_id)
+        except Exception:
+            notes = []
+        return {"task": task_data, "notes": notes}
+
     async def add_note(self, task_id: str, text: str, actor_id: str) -> None:
         """Add a note to a task.
 

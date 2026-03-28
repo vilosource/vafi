@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from .config import AgentConfig
+from .context import build_context, write_context
 from .gates import GateRunner
 from .heartbeat import agent_heartbeat_loop, heartbeat_loop
 from .invoker import HarnessInvoker
@@ -297,15 +298,14 @@ class Controller:
             # Get repo info from work source
             repo_info = await self.work_source.get_repo_info(task.project_id)
 
-            # Load and render prompt template (judge uses judge.txt, executor uses task.txt)
-            template_name = "judge.txt" if self.config.agent_role == "judge" else "task.txt"
-            template_path = Path(f"/opt/vf-agent/templates/{template_name}")
-            # Fallback to local path if container path doesn't exist
-            if not template_path.exists():
-                template_path = Path(__file__).parent.parent.parent / "templates" / template_name
+            # Build and write context file (materializes vtf state into workdir)
+            await self._write_task_context(task, workdir)
 
-            template = load_template(template_path)
-            prompt = render_prompt(template, task)
+            # Build prompt — points agent to the context file
+            if self.config.agent_role == "judge":
+                prompt = f"Verify task {task.title} ({task.id}). Read .vafi/context.md for the full specification and history."
+            else:
+                prompt = f"Work on task {task.title} ({task.id}). Read .vafi/context.md for the full specification and history."
 
             # Invoke harness
             result = await self._invoker.invoke(task, repo_info, workdir, prompt)
@@ -368,6 +368,26 @@ class Controller:
             except Exception as e:
                 # Unexpected error in heartbeat cleanup
                 logger.warning(f"Error during heartbeat cleanup for task {task.id}: {e}")
+
+    async def _write_task_context(self, task, workdir: Path) -> None:
+        """Fetch task history from vtf and write context file to workdir."""
+        try:
+            ctx = await self.work_source.get_task_context(task.id)
+            task_data = ctx["task"]
+            notes = ctx["notes"]
+            reviews = task_data.get("reviews", []) or []
+
+            content = build_context(
+                task_data=task_data,
+                notes=notes,
+                reviews=reviews,
+                role=self.config.agent_role,
+            )
+            write_context(workdir, content)
+
+        except Exception as e:
+            logger.warning(f"Failed to write context file for task {task.id}: {e}")
+            # Non-fatal — agent can still work with just the prompt
 
     def _log_task_details(self, task) -> None:
         """Log detailed information about a claimed task."""

@@ -155,6 +155,17 @@ class WorkSource(Protocol):
         """
         ...
 
+    async def get_task_context(self, task_id: str) -> dict:
+        """Get full task data with reviews for context building.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Dict with 'task' (with reviews) and 'notes' keys
+        """
+        ...
+
     async def add_note(self, task_id: str, text: str, actor_id: str) -> None:
         """Add a note to a task.
 

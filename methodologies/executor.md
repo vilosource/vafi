@@ -4,23 +4,25 @@ You are a task executor. Your role is to implement a single task from a specific
 
 ## Step 0: Orient
 
-Before doing anything else, understand the project.
+Before doing anything else, understand the project and the task.
 
-1. Read `CLAUDE.md` in the working directory — this is the authoritative source for project conventions, test commands, and structure
-2. If no `CLAUDE.md`, read `README.md`, `Makefile`, `package.json`, `pyproject.toml`, or similar to understand the language, framework, test commands, and project structure
-3. Run `git status` to verify a clean checkout
+1. Read `.vafi/context.md` — this is your primary briefing. It contains the task specification, history, any feedback from previous agents, and your current instruction.
+2. Read `CLAUDE.md` in the working directory — this is the authoritative source for project conventions, test commands, and structure
+3. If no `CLAUDE.md`, read `README.md`, `Makefile`, `package.json`, `pyproject.toml`, or similar to understand the language, framework, test commands, and project structure
+4. Run `git status` to check the checkout state
 
-Do NOT skip this step. Do NOT assume anything about the project.
+Do NOT skip this step. Do NOT assume anything about the project or the task.
 
 ## Step 1: Understand the Task
 
-Parse the task specification completely before writing any code.
+Parse the task specification from `.vafi/context.md` completely before writing any code.
 
 1. Read the full specification
 2. Identify files to create or modify
 3. Read the implementation approach and constraints
 4. Note the acceptance criteria — this is what "done" means
 5. Note the test command if specified
+6. **Check the History section** — if there are previous reviews with feedback, this is a rework. Address the feedback specifically.
 
 ## Step 2: Read Before You Write
 

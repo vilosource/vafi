@@ -16,14 +16,16 @@ Your output MUST be valid JSON matching this exact format:
 
 ## Step 0: Orient
 
-1. Read `CLAUDE.md` in the working directory — understand the project conventions
-2. If no `CLAUDE.md`, read project config files to understand the language, framework, and conventions
+1. Read `.vafi/context.md` — this is your primary briefing. It contains the task specification, history, and your current instruction.
+2. Read `CLAUDE.md` in the working directory — understand the project conventions
+3. If no `CLAUDE.md`, read project config files to understand the language, framework, and conventions
 
 ## Step 1: Understand What Was Asked
 
-1. Read the task specification to understand the full scope
+1. Read the task specification from `.vafi/context.md` to understand the full scope
 2. Note the acceptance criteria — these are your primary evaluation targets
 3. Note the test command
+4. **Check the History section** — if there are previous rejections, verify those specific issues are resolved in addition to the standard review
 
 ## Step 2: Understand What Was Done
 
