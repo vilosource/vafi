@@ -70,66 +70,154 @@ Make vafi agents work as a general solution — generic executor and judge agent
 
 ---
 
-## Spike Prep (must complete before running spikes)
+## Execution Plan
 
-### For Spike 1 (cold start execution)
+### Phase 1: Spike Infrastructure
 
-1. Create spike repo (`vilosource/vafi-spike`) — simple Python project with existing code, tests, CLAUDE.md
-2. Create vtf project in vtf-dev pointing at spike repo
-3. Write generic executor methodology (`methodologies/executor.md`) — first draft
+Set up everything needed to run spikes.
 
-### For Spike 2 (judge verification) — additionally requires
+**1.1 Create spike repo**
+- Create `vilosource/vafi-spike` on GitHub
+- Simple Python calculator library: `src/calc/operations.py`, `src/calc/validators.py`
+- Existing tests: `tests/test_operations.py`, `tests/test_validators.py`
+- `CLAUDE.md` with project conventions (test commands, code style, structure)
+- Enough existing code that the executor has patterns to follow
+- Must be cloneable via SSH by the executor container
 
-4. Write generic judge methodology (`methodologies/judge.md`) — first draft
-5. Controller: poll `pending_completion_review` when `agent_role=judge`
-6. Controller: call `submit_review()` instead of `complete()`/`fail()` when role=judge
-7. Controller: parse verdict (approved/changes_requested) from harness output
-8. Build and push image with both methodologies
-9. Deploy judge pod to vafi-dev (`VF_AGENT_ROLE=judge`, `VF_AGENT_TAGS=judge`)
+**1.2 Create vtf project**
+- Create a project in vtf-dev pointing at the spike repo (`repo_url`, `default_branch`)
+- Create a workplan and active milestone for spike tasks
 
-### For Spike 3 (rework flow) — no additional prep
+**1.3 Fix git config blocker**
+- Add `git config --global user.name/email` to entrypoint.sh
+- Build and push updated image
+- Redeploy executor to vafi-dev
 
-Uses executor from Spike 1 + judge from Spike 2. Rework claim already works.
+**1.4 Write generic executor methodology**
+- New `methodologies/executor.md` replacing vafi-specific version
+- Reference the vtf-executor agent (239 lines) for structure, strip project-specific content
+- Focus on: read spec, read existing patterns, implement, run tests, commit
+- First draft — will iterate based on Spike 1 results
+
+**1.5 Build and deploy executor**
+- Build image with updated entrypoint + generic methodology
+- Push to Harbor
+- Deploy to vafi-dev
+- Verify executor pod starts and polls successfully
+
+### Phase 2: Spike 1 — Cold Start Execution
+
+Test the executor on an unfamiliar repo with a generic methodology.
+
+**2.1 Create test task**
+- Write a task spec: "Add a power function to operations.py"
+- Include: description, files to create/modify, implementation approach, acceptance criteria, test command
+- Submit task to vtf-dev
+
+**2.2 Observe execution**
+- Watch executor logs: does it claim, clone, execute?
+- Monitor CXDB for trace capture
+- Wait for task to reach `pending_completion_review` or `done`
+
+**2.3 Evaluate results**
+- Read CXDB trace: what did the executor do? Did it read patterns? Follow conventions?
+- Check the workdir: are the files correct? Do tests pass? Is the commit clean?
+- Document findings in Spike 1 section
+- Update Rumsfeld matrix with learnings
+
+### Phase 3: Judge Infrastructure
+
+Build the judge capability into the controller.
+
+**3.1 Write generic judge methodology**
+- New `methodologies/judge.md`
+- Reference the vtf-judge agent (248 lines) for structure, strip project-specific content
+- Focus on: run tests, review code against spec, check acceptance criteria, produce verdict
+- Verdict format: structured JSON (decision + reason)
+
+**3.2 Controller changes for judge role**
+- `_poll_and_process()`: branch on `config.agent_role`
+  - executor: poll `changes_requested` + `claimable` (current behavior)
+  - judge: poll `pending_completion_review`
+- Judge report: parse harness output for verdict, call `submit_review()`
+- Use `--json-schema` to enforce structured verdict output from harness
+- Judge prompt template: `templates/judge.txt` (similar to task.txt but "verify" instead of "implement")
+
+**3.3 Build and deploy judge**
+- Build image with judge methodology + controller changes
+- Deploy second pod to vafi-dev: `VF_AGENT_ROLE=judge`, `VF_AGENT_TAGS=judge`
+- Verify judge pod starts and polls `pending_completion_review`
+
+### Phase 4: Spike 2 — Judge Verification
+
+Test the judge on the executor's output from Spike 1.
+
+**4.1 Trigger judge**
+- The task from Spike 1 should be in `pending_completion_review`
+- Judge pod picks it up, enters same workdir, runs harness
+
+**4.2 Observe verification**
+- Watch judge logs: does it claim, run tests, review code?
+- Monitor CXDB for judge trace
+- Read the structured verdict: is it approved or changes_requested?
+
+**4.3 Evaluate results**
+- Was the verdict correct? Did the judge catch real issues or false positives?
+- Did the judge run tests independently?
+- Did the structured output (`--json-schema`) work?
+- Document findings, update matrix
+
+### Phase 5: Spike 3 — Rework Flow
+
+Test the full autonomous cycle: execute → judge reject → rework → judge approve.
+
+**5.1 Create a task with an intentional trap**
+- Write a task spec that a competent executor will implement but with a gap the judge should catch
+- Example: "Add a divide function" — executor implements but may miss division by zero handling
+- Submit task
+
+**5.2 Observe full cycle**
+- Executor implements → judge reviews → judge rejects with feedback → executor picks up rework → judge re-reviews
+- Watch both executor and judge logs through the full cycle
+- Monitor CXDB for all traces (executor attempt 1, judge review 1, executor rework, judge review 2)
+
+**5.3 Evaluate results**
+- Did the judge catch the intentional gap?
+- Did the executor read the judge feedback? (How — via vtf reviews? Via the workdir?)
+- Did the executor fix the issue without reimplementing from scratch?
+- Did the judge approve the rework?
+- How many cycles did it take?
+- Document findings, update matrix
+
+### Phase 6: Spike 4 — Minimal Methodology
+
+Test how little methodology the agents actually need.
+
+**6.1 Strip executor methodology**
+- Reduce to minimal instructions (10-20 lines)
+- Remove step-by-step workflow, keep only goals and constraints
+
+**6.2 Strip judge methodology**
+- Same reduction
+
+**6.3 Run the same task from Spike 1**
+- Fresh workdir, same spec
+- Compare results to Spike 1: same quality? Worse? Better?
+
+**6.4 Evaluate**
+- What's essential in the methodology?
+- What does the model figure out on its own?
+- Document findings, update matrix
 
 ---
 
-## Spike Plan
-
-### Spike repo
-
-A simple Python project (`vilosource/vafi-spike`) with:
-- A utility library (calculator or similar)
-- Existing tests and patterns
-- A CLAUDE.md with basic project conventions
-- Enough code that the executor has patterns to follow
-
-### What to test
-
-**Spike 1: Cold start execution**
-- Create a task spec for a new feature
-- Executor has never seen the repo
-- Observe: does it clone, read patterns, implement correctly, run tests, commit?
-
-**Spike 2: Judge verification**
-- After executor completes, run judge
-- Observe: does it run tests independently, review code, produce useful verdict?
-
-**Spike 3: Rework flow**
-- Judge rejects with specific feedback
-- Executor picks up rework
-- Observe: does it read the feedback, build on previous work, fix the issues?
-
-**Spike 4: Minimal methodology**
-- Strip the methodology to bare minimum
-- How little can we tell the executor and still get good results?
-- What's essential vs nice-to-have?
-
-### Success criteria
+## Success Criteria
 
 - [ ] Executor completes a task on unfamiliar repo without project-specific methodology
 - [ ] Judge produces actionable feedback that identifies real issues
 - [ ] Executor successfully reworks based on judge feedback without human intervention
 - [ ] Full cycle (execute → judge → rework → judge approve) completes autonomously
+- [ ] Rumsfeld matrix Known Unknowns resolved with evidence from spike traces
 
 ---
 
