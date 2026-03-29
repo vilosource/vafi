@@ -31,8 +31,7 @@ if [ "$AGENT_ROLE" = "architect" ]; then
     WORKDIR="${VF_SESSIONS_DIR:-/sessions}/architect-$$"
 
     # Patch ~/.claude.json: skip onboarding + configure vtf MCP
-    VTF_MCP_URL="${VF_VTF_MCP_URL:-}"
-    VTF_TOKEN="${VF_VTF_TOKEN:-}"
+    export WORKDIR
     python3 -c "
 import json, os
 
@@ -54,8 +53,8 @@ projects[workdir] = {
 }
 cfg['projects'] = projects
 
-mcp_url = os.environ.get('VTF_MCP_URL', '')
-vtf_token = os.environ.get('VTF_TOKEN', '')
+mcp_url = os.environ.get('VF_VTF_MCP_URL', '')
+vtf_token = os.environ.get('VF_VTF_TOKEN', '')
 if mcp_url and vtf_token:
     cfg['mcpServers'] = {
         'vtf': {
