@@ -338,7 +338,16 @@ This means: "why did we plan it this way?" has an answer — read the architect 
 - Enable Claude Code (and other MCP clients) to plan autonomously
 - Test the full loop: plan → review → approve → execute → judge
 
-### Phase 4: Web UI
+### Phase 4: Greenfield project support
+
+The current design assumes an existing project with a repo to clone. For new projects:
+- No repo exists — architect skips clone, proposes project structure instead of discovering it
+- No vtf project exists — architect creates one via MCP
+- First tasks are scaffolding (init repo, set up test framework, create structure) before feature work
+- Methodology needs a greenfield path that asks about tech stack, conventions, and deployment target instead of exploring an existing codebase
+- Task specs have no "files to modify" or "references" — only "files to create"
+
+### Phase 5: Web UI
 
 - Planning chat interface in vtf web app
 - Session management from the browser
