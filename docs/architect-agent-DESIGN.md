@@ -333,6 +333,10 @@ The current design assumes an existing project with a repo to clone. For new pro
 - Session management from the browser
 - Live preview of specs and tasks
 
+### Future: Nice-to-haves
+
+- **MCP server exposing the architect** — wrap the architect as MCP tools (`architect_start/send/close`) so external MCP clients can drive planning sessions programmatically. Not needed since headless `kubectl exec` already supports autonomous mode.
+
 ## 11. Spike Results (2026-03-29)
 
 All technical unknowns resolved:
