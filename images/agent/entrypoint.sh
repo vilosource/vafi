@@ -70,7 +70,7 @@ with open(cfg_path, 'w') as f:
     json.dump(cfg, f, indent=2)
 " 2>&1 && echo "Patched ~/.claude.json" || echo "Warning: failed to patch ~/.claude.json"
 
-    # Clone project repo if URL provided
+    # Clone project repo if URL provided, otherwise create empty workdir
     if [ -n "$REPO_URL" ]; then
         if [ ! -d "$WORKDIR/.git" ]; then
             echo "Cloning $REPO_URL (branch: $DEFAULT_BRANCH) to $WORKDIR"
@@ -78,6 +78,10 @@ with open(cfg_path, 'w') as f:
         else
             echo "Repo already cloned at $WORKDIR"
         fi
+        cd "$WORKDIR"
+    else
+        echo "No repo URL — greenfield mode"
+        mkdir -p "$WORKDIR"
         cd "$WORKDIR"
     fi
 
