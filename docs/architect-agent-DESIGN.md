@@ -1,8 +1,7 @@
 # Architect Agent Design
 
 > The third vafi agent role — translates human intent into formal requirements and vtf draft tasks.
-> Companion to: [openspec-viloforge-integration-DESIGN.md](openspec-viloforge-integration-DESIGN.md)
-> Created: 2026-03-29
+> Created: 2026-03-29 | Updated: 2026-03-30 (spike findings incorporated)
 
 ---
 
@@ -21,7 +20,7 @@ The architect is a **planning agent** that:
 3. Reads the codebase to understand what exists, patterns, and structure
 4. Produces formal requirements using SHALL/WHEN/THEN format
 5. Breaks work into vtf draft tasks informed by the actual codebase
-6. Creates draft tasks in vtf (the draft-to-todo transition is the review gate)
+6. Creates draft tasks in vtf via MCP (the draft-to-todo transition is the review gate)
 
 ### What It Does NOT Do
 
@@ -32,7 +31,7 @@ The architect is a **planning agent** that:
 
 ## 3. Interaction Model
 
-The architect is **launched on demand**, not long-lived. It runs in a container with Claude Code (or another harness), the project repo cloned, and access to vtf and project knowledge.
+The architect is **launched on demand**, not long-lived. It runs in a container with Claude Code, the project repo cloned, and vtf MCP access for task management.
 
 ### Two Modes
 
@@ -40,13 +39,13 @@ The architect is **launched on demand**, not long-lived. It runs in a container 
 - Human describes what they want
 - Architect asks clarifying questions, explores the codebase
 - Back-and-forth until requirements are clear
-- Architect produces specs and draft tasks
+- Architect produces specs and creates draft tasks via MCP
 - Human reviews and approves (draft-to-todo in vtf)
 
 **Autonomous** — another agent (or human via single prompt) delegates:
 - Receives a planning prompt with enough context
 - Reads the codebase and project knowledge
-- Produces specs and draft tasks without further input
+- Produces specs and creates draft tasks via MCP without further input
 - Human reviews the output asynchronously
 
 Both modes produce the same output: formal requirements + vtf draft tasks.
@@ -62,21 +61,15 @@ vtf plan <project-name>
 
 # Example:
 vtf plan vafi
-# → Launches architect container
+# → Launches architect Pod
 # → Clones vafi repo
-# → Loads vtf project context (workplans, tasks, history)
-# → Drops into interactive session
+# → Drops into interactive Claude Code session
 
 vtf plan vafi --prompt "Add webhook notifications for task state changes"
 # → Launches architect in autonomous mode
 # → Produces specs and draft tasks
 # → Returns results
 ```
-
-The CLI uses the vf-agents session model as prior art:
-- `vtf plan <project>` — start interactive session (like `vfa session start` + `attach`)
-- `vtf plan <project> --prompt "..."` — autonomous mode (like `vfa session start` with headless output)
-- Session stays alive for follow-ups until explicitly closed
 
 ### 4.2 MCP Server
 
@@ -88,95 +81,169 @@ architect_send(session_id, message)   → response
 architect_close(session_id)           → summary
 ```
 
-This enables:
-- Claude Code (or any MCP client) to plan features autonomously
-- IDE integrations to offer planning workflows
-- Chaining: "plan this feature, then when I approve, submit the tasks"
-
 Key use case: user tells Claude Code "plan the next feature for vafi" — Claude Code uses MCP tools to start an architect session, drives the conversation, creates draft tasks, and reports back. Human reviews drafts in vtf.
 
 ### 4.3 Web UI
 
-Planning session accessible from the vtf web interface:
-- Start a session from the project page or workplan
-- Chat interface for interactive planning
-- Live preview of generated specs and tasks
-- Approve/reject directly in the UI (draft-to-todo)
-
-This is the lowest priority interface — CLI and MCP cover the primary use cases.
+Planning session accessible from the vtf web interface. Lowest priority — CLI and MCP cover the primary use cases.
 
 ## 5. Architecture
 
 ### Container Model
 
-The architect runs in a k8s Pod, launched on demand:
+The architect uses the **same image** as executor/judge (`vafi-agent`). The difference is the entrypoint — when `VF_AGENT_ROLE=architect`, the entrypoint skips the controller loop and either starts an interactive Claude Code session or runs headless with a prompt.
 
 ```
 vtf plan vafi
        │
        ▼
-  vtf API creates architect pod
+  Create Pod (vafi-agent image, VF_AGENT_ROLE=architect)
        │
        ▼
-  ┌─────────────────────────────┐
-  │  Architect Pod              │
-  │                             │
-  │  ┌───────────────────────┐  │
-  │  │  Claude Code CLI      │  │
-  │  │  (interactive or -p)  │  │
-  │  └───────────┬───────────┘  │
-  │              │              │
-  │  ┌───────────▼───────────┐  │
-  │  │  Project repo clone   │  │
-  │  │  + methodology        │  │
-  │  │  + vtf CLI/MCP access │  │
-  │  └───────────────────────┘  │
-  └─────────────────────────────┘
+  ┌─────────────────────────────────┐
+  │  Architect Pod                  │
+  │                                 │
+  │  Entrypoint:                    │
+  │  1. Copy methodology → CLAUDE.md│
+  │  2. Patch ~/.claude.json        │
+  │  3. Clone project repo          │
+  │  4. sleep infinity (or claude)  │
+  │                                 │
+  │  ┌───────────────────────────┐  │
+  │  │  Claude Code CLI          │  │
+  │  │  + vtf MCP (14 tools)     │  │
+  │  │  + project repo on disk   │  │
+  │  │  + methodology            │  │
+  │  └───────────────────────────┘  │
+  └─────────────────────────────────┘
 ```
 
-Uses the same image hierarchy as executor/judge:
-- Base layer (git, python, node, tools)
-- Claude layer (Claude Code CLI, cxtx)
-- Agent layer (methodology, vtf CLI)
+No new image required. No vtf CLI needed — MCP provides full task management.
 
-Role is `architect` — methodology file at `methodologies/architect.md` gets copied to `~/.claude/CLAUDE.md`.
+### Entrypoint Changes
+
+The existing `entrypoint.sh` ends with `exec python3 -m controller`. For architect role, it must:
+
+1. Copy `methodologies/architect.md` → `~/.claude/CLAUDE.md` (same as executor/judge)
+2. Patch `~/.claude.json` with onboarding and MCP config (see Section 6)
+3. Configure git identity (same as executor/judge)
+4. Clone the project repo into the workdir
+5. **Skip the controller** — either `sleep infinity` (for `kubectl exec -it` attach) or `exec claude` (direct interactive) or `claude -p "$PROMPT"` (autonomous)
+
+```bash
+# In entrypoint.sh, replace the final line:
+if [ "$AGENT_ROLE" = "architect" ]; then
+    # Setup repo clone
+    WORKDIR="/sessions/architect-$(date +%s)"
+    git clone --branch "$VF_DEFAULT_BRANCH" --single-branch --depth 1 "$VF_REPO_URL" "$WORKDIR"
+    cd "$WORKDIR"
+
+    if [ -n "$VF_ARCHITECT_PROMPT" ]; then
+        # Autonomous mode
+        exec claude -p "$VF_ARCHITECT_PROMPT" --output-format json \
+            --max-turns "${VF_MAX_TURNS:-50}" --dangerously-skip-permissions
+    else
+        # Interactive mode — wait for kubectl exec -it
+        echo "Architect ready at $WORKDIR. Attach with: kubectl exec -it <pod> -- bash -c 'cd $WORKDIR && claude'"
+        exec sleep infinity
+    fi
+else
+    exec python3 -m controller
+fi
+```
 
 ### Lifecycle
 
-1. **Launch**: `vtf plan <project>` → API creates Pod with project context
-2. **Setup**: Pod clones repo, loads vtf project state (workplans, tasks, existing specs)
-3. **Interact**: Human (or agent) sends prompts, architect responds
-4. **Produce**: Architect creates draft tasks in vtf via CLI/API
-5. **Close**: Pod is destroyed (or TTL-expires)
+1. **Launch**: `vtf plan <project>` → create Pod with project context
+2. **Setup**: Entrypoint patches config, clones repo
+3. **Interact**: Human attaches (`kubectl exec -it`) or autonomous prompt runs
+4. **Produce**: Architect creates draft tasks in vtf via MCP tools
+5. **Close**: Pod deleted (manual or TTL)
 
-Unlike executor/judge, the architect Pod has no controller loop. The harness (Claude Code) IS the process — either interactive (TTY attached) or headless (prompt mode).
+## 6. Configuration (Spike-Verified)
 
-### What Gets Loaded (Project Context)
+### ~/.claude.json
 
-When the architect starts, it has:
+Must be patched by the entrypoint before Claude Code starts. Three concerns:
 
-| Context | Source | How |
-|---------|--------|-----|
-| Project codebase | vtf project `repo_url` + `default_branch` | `git clone` into workdir |
-| Existing specs | `openspec/specs/` in the cloned repo | Available on disk |
-| Project metadata | vtf API (workplans, milestones, task history) | Available via vtf CLI/MCP |
-| Design docs | `docs/` in the cloned repo | Available on disk |
-| CLAUDE.md | Project repo | Auto-loaded by Claude Code |
-| Architect methodology | Container image | `~/.claude/CLAUDE.md` |
+```json
+{
+  "hasCompletedOnboarding": true,
+  "theme": "dark",
+  "projects": {
+    "<workdir-path>": {
+      "hasTrustDialogAccepted": true,
+      "hasCompletedProjectOnboarding": true
+    }
+  },
+  "mcpServers": {
+    "vtf": {
+      "type": "http",
+      "url": "http://vtf-mcp.vtf-dev.svc.cluster.local:8002/mcp",
+      "headers": {
+        "Authorization": "Token <VF_VTF_TOKEN>"
+      }
+    }
+  }
+}
+```
 
-The architect has the full codebase so it can produce informed plans — it knows what patterns exist, what files to reference, and how things are structured. This makes the resulting task specs much more useful for executors.
+**Critical details** (discovered during spike):
+- `"type": "http"` is **required** — without it, MCP server silently fails to connect
+- `hasCompletedOnboarding` skips the first-run welcome screen that blocks interactive input
+- `hasTrustDialogAccepted` and `hasCompletedProjectOnboarding` are per-workdir and skip trust prompts
+- Pattern from vf-agents `prepareClaudeHomeConfig()` in `internal/orchestrator/run.go`
 
-## 6. Architect Methodology
+### Environment Variables
 
-The methodology file (`methodologies/architect.md`) defines how the architect behaves. Core principles:
+Same secrets as executor/judge, plus architect-specific vars:
+
+| Variable | Purpose |
+|----------|---------|
+| `VF_AGENT_ROLE=architect` | Selects architect entrypoint path |
+| `VF_REPO_URL` | Git clone URL (from vtf project) |
+| `VF_DEFAULT_BRANCH` | Branch to clone (from vtf project) |
+| `VF_ARCHITECT_PROMPT` | If set, run autonomous mode with this prompt |
+| `ANTHROPIC_AUTH_TOKEN` | Claude API auth (from secret) |
+| `ANTHROPIC_BASE_URL` | Claude API endpoint (from secret) |
+| `VF_VTF_TOKEN` | vtf API token for MCP auth (from secret) |
+
+### Volumes and Secrets
+
+Identical to executor/judge:
+- `vafi-sessions` PVC mounted at `/sessions` (shared workdir storage)
+- `github-ssh` secret → init container copies to `/home/agent/.ssh`
+- `vafi-secrets` → `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `VF_VTF_TOKEN`
+
+## 7. vtf MCP Access (Spike-Verified)
+
+The architect uses vtf MCP tools directly — no vtf CLI needed. Spike confirmed 14 tools available:
+
+| Tool | Purpose for Architect |
+|------|----------------------|
+| `vtf_board_overview` | See current project state |
+| `vtf_search_tasks` | Find existing tasks, avoid duplicates |
+| `vtf_task_detail` | Read existing task specs for context |
+| `vtf_manage_task` | **Create draft tasks** (primary output) |
+| `vtf_manage_workplan` | Create/update workplans |
+| `vtf_manage_milestone` | Create/update milestones |
+| `vtf_workplan_tree` | See workplan/milestone/task hierarchy |
+
+The MCP server runs as a separate service in each vtf namespace:
+- Dev: `http://vtf-mcp.vtf-dev.svc.cluster.local:8002/mcp`
+- Prod: `http://vtf-mcp.vtf-prod.svc.cluster.local:8002/mcp`
+
+## 8. Architect Methodology
+
+The methodology file (`methodologies/architect.md`) defines how the architect behaves. Copied to `~/.claude/CLAUDE.md` by the entrypoint.
 
 ### Planning Process
 
-1. **Understand what exists** — read the codebase, existing specs, design docs, and vtf history
+1. **Understand what exists** — read the codebase, existing specs, design docs, and vtf board state (via MCP)
 2. **Clarify intent** — ask questions until requirements are unambiguous (interactive mode)
 3. **Write formal requirements** — use SHALL/WHEN/THEN format for every requirement
 4. **Break down into tasks** — each task is a self-contained unit, informed by actual codebase structure
-5. **Create draft tasks in vtf** — use vtf CLI to create tasks with requirements, acceptance criteria, file references, and dependency ordering
+5. **Create draft tasks in vtf** — use vtf MCP tools to create tasks with requirements, acceptance criteria, file references, and dependency ordering
 
 ### Output Format
 
@@ -197,7 +264,7 @@ The system SHALL send webhook notifications when a task transitions to a new sta
 - THEN the system retries up to 3 times with exponential backoff
 ```
 
-**vtf draft tasks** (created via API):
+**vtf draft tasks** (created via MCP `vtf_manage_task`):
 ```yaml
 title: "Add webhook model and registration endpoint"
 description: |
@@ -226,8 +293,6 @@ requirements:
 depends_on: []
 ```
 
-Because the architect has the codebase, the task specs include real file paths, references to existing patterns, and accurate test commands — giving executors a head start.
-
 ### Task Quality Checklist
 
 The architect validates each task before creating it:
@@ -240,31 +305,9 @@ The architect validates each task before creating it:
 - [ ] Requirements trace back to SHALL/WHEN/THEN specs
 - [ ] Scope is right-sized — one task per logical unit of work
 
-## 7. vtf Integration
+## 9. cxdb Integration
 
-### New vtf Concepts
-
-**`vtf plan` command**: CLI entry point for architect sessions. Talks to vtf API to:
-1. Look up project (repo_url, default_branch, existing workplans)
-2. Request architect Pod launch (via vafi or directly via k8s)
-3. Attach to the Pod (interactive) or send prompt (autonomous)
-
-**Draft tasks as output**: The architect creates tasks in `draft` status. The existing draft-to-todo transition is the human review gate — no new approval workflow needed.
-
-### API Additions
-
-```
-POST /v1/projects/{id}/architect/       → Launch architect session
-GET  /v1/projects/{id}/architect/       → Get active session status
-POST /v1/projects/{id}/architect/send/  → Send prompt to session
-DELETE /v1/projects/{id}/architect/     → Close session
-```
-
-Or the session management could live entirely in vafi, with vtf just providing project context via its existing API.
-
-## 8. cxdb Integration
-
-Every architect session is traced in cxdb (same as executor/judge). The trace captures:
+Every architect session is traced in cxdb (same as executor/judge) when `VF_CXDB_URL` is set. The trace captures:
 
 - The full conversation (human intent → architect reasoning → output)
 - Design decisions made during planning
@@ -272,29 +315,26 @@ Every architect session is traced in cxdb (same as executor/judge). The trace ca
 
 This means: "why did we plan it this way?" has an answer — read the architect trace in cxdb.
 
-The trace also serves as input for future architect sessions: "last time we planned webhooks, here's what we decided and why."
+## 10. Rollout
 
-## 9. Rollout
+### Phase 1: Manual container + methodology
 
-### Phase 1: CLI only, manual container
-
-- Write architect methodology
-- Launch container manually (kubectl or docker)
-- Clone repo, load vtf project context
-- Interactive Claude Code session for planning
-- Create draft tasks via vtf CLI from inside the container
-- Validate the planning workflow works end-to-end
+- Write `methodologies/architect.md`
+- Update `entrypoint.sh` to handle `VF_AGENT_ROLE=architect`
+- Add `~/.claude.json` patching (onboarding + MCP config)
+- Launch Pod manually, validate interactive and autonomous modes
+- Test full workflow: plan → create draft tasks via MCP → review in vtf
 
 ### Phase 2: `vtf plan` command
 
 - Add `vtf plan <project>` to vtf CLI
-- Automate container launch with project context
-- Automate repo clone and context loading
-- Interactive and autonomous modes
+- Automate Pod launch with project context (repo_url, default_branch from vtf project)
+- Support `--prompt` for autonomous mode
+- Pod TTL and cleanup
 
 ### Phase 3: MCP server
 
-- Expose architect as MCP tools
+- Expose architect as MCP tools (`architect_start/send/close`)
 - Enable Claude Code (and other MCP clients) to plan autonomously
 - Test the full loop: plan → review → approve → execute → judge
 
@@ -304,14 +344,30 @@ The trace also serves as input for future architect sessions: "last time we plan
 - Session management from the browser
 - Live preview of specs and tasks
 
-## 10. Open Questions
+## 11. Spike Results (2026-03-29)
 
-1. **Where does session management live?** vtf API (new endpoints) or vafi (extend the controller)? The architect Pod is vafi infrastructure, but the session is tied to a vtf project.
+All technical unknowns resolved:
 
-2. **How does the architect access vtf?** Same as executor — vtf API token in the container. But the architect also needs to CREATE tasks, not just read them. Does it use the vtf CLI directly, or go through the controller?
+| Test | Result |
+|------|--------|
+| Same image, entrypoint override | Works — no new image needed |
+| Claude Code headless in k8s Pod | Works — `-p` with `--output-format json` |
+| Claude Code interactive in k8s Pod | Works — `kubectl exec -it` with TTY |
+| SSH auth / repo clone | Works — vilosource identity |
+| Codebase-aware prompts | Works — reads files, produces informed output |
+| Session resume (`--resume`) | Works — multi-turn preserves context |
+| Git push from Pod | Works — push and revert verified |
+| vtf MCP from Pod | Works — 14 tools, `type: http` required in config |
+| Onboarding skip | Works — patch `~/.claude.json` with flags |
 
-3. **Should the architect commit specs to the repo?** If it writes `openspec/specs/` files, those need to be committed and pushed. Same deliver mechanism as executor — but for planning artifacts, not code.
+**Key finding**: MCP config in `~/.claude.json` **must** include `"type": "http"` — without it the server silently fails to connect. This was not obvious from documentation.
 
-4. **How do we handle multi-session planning?** If the human starts a session, closes it, and comes back later — can we resume? The vf-agents session model supports this via persistent containers + session IDs.
+## 12. Open Questions
 
-5. **What's the minimum viable methodology?** The executor methodology is 60 lines. How much guidance does the architect need to produce good specs and task breakdowns?
+1. **Where does session management live?** vtf API (new endpoints) or a standalone service? The architect Pod is k8s infrastructure, but the session is tied to a vtf project.
+
+2. **Should the architect commit specs to the repo?** If it writes `openspec/specs/` files, those need to be committed and pushed. Same deliver mechanism as executor — but for planning artifacts, not code.
+
+3. **How do we handle multi-session planning?** If the human starts a session, closes it, and comes back later — can we resume? Session resume (`--resume`) works, but the Pod needs to stay alive.
+
+4. **What's the minimum viable methodology?** The executor methodology is 60 lines. How much guidance does the architect need to produce good specs and task breakdowns?
