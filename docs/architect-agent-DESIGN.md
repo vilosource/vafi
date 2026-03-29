@@ -50,9 +50,7 @@ The architect is **launched on demand**, not long-lived. It runs in a container 
 
 Both modes produce the same output: formal requirements + vtf draft tasks.
 
-## 4. Three Interfaces
-
-Same architect backend, multiple frontends:
+## 4. Interfaces
 
 ### 4.1 vtf CLI
 
@@ -71,19 +69,7 @@ vtf plan vafi --prompt "Add webhook notifications for task state changes"
 # → Returns results
 ```
 
-### 4.2 MCP Server
-
-Exposes architect capabilities as MCP tools that any client can call:
-
-```
-architect_start(project, prompt?)     → session_id
-architect_send(session_id, message)   → response
-architect_close(session_id)           → summary
-```
-
-Key use case: user tells Claude Code "plan the next feature for vafi" — Claude Code uses MCP tools to start an architect session, drives the conversation, creates draft tasks, and reports back. Human reviews drafts in vtf.
-
-### 4.3 Web UI
+### 4.2 Web UI
 
 Planning session accessible from the vtf web interface. Lowest priority — CLI and MCP cover the primary use cases.
 
@@ -332,13 +318,7 @@ This means: "why did we plan it this way?" has an answer — read the architect 
 - Support `--prompt` for autonomous mode
 - Pod TTL and cleanup
 
-### Phase 3: MCP server
-
-- Expose architect as MCP tools (`architect_start/send/close`)
-- Enable Claude Code (and other MCP clients) to plan autonomously
-- Test the full loop: plan → review → approve → execute → judge
-
-### Phase 4: Greenfield project support
+### Phase 3: Greenfield project support
 
 The current design assumes an existing project with a repo to clone. For new projects:
 - No repo exists — architect skips clone, proposes project structure instead of discovering it
@@ -347,7 +327,7 @@ The current design assumes an existing project with a repo to clone. For new pro
 - Methodology needs a greenfield path that asks about tech stack, conventions, and deployment target instead of exploring an existing codebase
 - Task specs have no "files to modify" or "references" — only "files to create"
 
-### Phase 5: Web UI
+### Phase 4: Web UI
 
 - Planning chat interface in vtf web app
 - Session management from the browser
