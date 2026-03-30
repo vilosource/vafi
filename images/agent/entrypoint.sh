@@ -93,6 +93,38 @@ with open(cfg_path, 'w') as f:
 
     cd "$WORKDIR"
 
+    # Write project CLAUDE.md so the architect has context about this session
+    if [ ! -f CLAUDE.md ]; then
+        VTF_API="${VTF_API_URL:-}"
+        WORKPLAN_ID="${VTF_WORKPLAN_ID:-}"
+        cat > CLAUDE.md <<CLAUDEMD
+# Architect Session
+
+You are an architect agent in the vafi fleet. You have MCP access to vtf (task tracker) for managing projects, workplans, and tasks.
+
+## Project
+$(if [ -n "$PROJECT_SLUG" ]; then echo "- **Project**: $PROJECT_SLUG"; else echo "- **Mode**: Greenfield (no project yet — help the user define and create one via vtf MCP)"; fi)
+$(if [ -n "$REPO_URL" ]; then echo "- **Repository**: $REPO_URL (branch: $DEFAULT_BRANCH)"; fi)
+$(if [ -n "$WORKPLAN_ID" ]; then echo "- **Workplan**: $WORKPLAN_ID"; fi)
+
+## Available Tools
+
+Use vtf MCP tools to:
+- Browse existing workplans and tasks (vtf_board_overview, vtf_workplan_tree)
+- Create and manage tasks (vtf_manage_task, vtf_manage_workplan)
+- Search for tasks (vtf_search_tasks)
+$(if [ -z "$PROJECT_SLUG" ]; then echo "- Create a new project (vtf_manage_workplan with new project)"; fi)
+
+## Workflow
+
+1. Understand what the user wants to build or change
+2. Explore existing project state via MCP (if project exists)
+3. Break work into concrete, executable tasks
+4. Create tasks in vtf with clear specs, acceptance criteria, and test commands
+CLAUDEMD
+        echo "Wrote project CLAUDE.md"
+    fi
+
     # Write sentinel: signals readiness and stores workdir path for WebSocket proxy
     echo "$WORKDIR" > /tmp/ready
     echo "Architect ready at $WORKDIR"
