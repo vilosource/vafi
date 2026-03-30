@@ -132,9 +132,11 @@ The entrypoint writes `/tmp/ready` (containing the workdir path) after all setup
 
 | Name | Type | Mount | Purpose |
 |------|------|-------|---------|
-| `home` | emptyDir | `/home/agent` | Ephemeral home (`.claude/` config, sessions) |
-| `sessions` | emptyDir | `/sessions` | Workdir for project files and repo clones |
+| `home` | emptyDir | `/home/agent` | Ephemeral home (`.claude/` config, Claude sessions) |
+| `sessions` | PVC (`console-sessions`) | `/sessions` | Persistent workdir for project files and repo clones |
 | `github-ssh` | secret | `/home/agent/.ssh` (readonly) | SSH key for git clone |
+
+The `sessions` volume uses a PersistentVolumeClaim (`console-sessions`, 10Gi), not an emptyDir. This means repo clones and workdir files survive pod deletion. When a new pod is created for the same project, the repo is already there — no re-clone needed. Claude sessions (`~/.claude/`) are still in the ephemeral `home` volume, but `--continue` handles session resumption gracefully.
 
 ### Resources
 
@@ -268,7 +270,7 @@ The `find_or_create` logic matches pods by `role + project + user` labels. If a 
 
 ### Pod Loss (cleanup or crash)
 
-When the pod is deleted (idle TTL or crash), everything is lost: repo clone, Claude sessions, workdir files. A new pod is created on next connection. The architect starts fresh but can rediscover prior work via vtf MCP (tasks, workplans survive in vtf).
+When the pod is deleted (idle TTL or crash), the `/sessions` volume persists on the PVC. Repo clones and workdir files survive. Only the Claude sessions (`~/.claude/`) in the ephemeral home volume are lost. On next connection, a new pod mounts the same PVC, the entrypoint sees the repo already cloned (no-op), and Claude starts fresh (no `--continue` since no session directory exists yet). The architect can rediscover prior work via vtf MCP and the existing codebase.
 
 ---
 
@@ -382,7 +384,7 @@ The infrastructure (pod launch, WebSocket proxy, session management, readiness p
 
 ## Known Limitations
 
-- **Session loss on pod deletion**: Claude sessions don't survive pod cleanup. Work product (vtf tasks) survives.
+- **Claude session loss on pod deletion**: Claude conversation history doesn't survive pod cleanup (stored in ephemeral home volume). Workdir files and repo clones persist on PVC. Work product (vtf tasks) survives.
 - **Single session per workdir**: `--continue` resumes the most recent session. No multi-session support.
 - **No repo clone for greenfield**: Greenfield sessions start with an empty workdir. The architect proposes structure but has no codebase to reference.
 - **First-run onboarding flash**: On the very first Claude launch in a new pod, the onboarding screen may briefly appear before `.claude.json` takes effect.
