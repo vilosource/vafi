@@ -48,6 +48,10 @@ spec:
             runAsUser: 1001
             runAsNonRoot: true
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             {{- include "vafi.judgeEnv" . | nindent 12 }}
           volumeMounts:
             - name: sessions

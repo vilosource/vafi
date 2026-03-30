@@ -29,6 +29,8 @@ class AgentConfig:
     cxdb_url: str = ""
     cxdb_public_url: str = ""
 
+    pod_name: str | None = None
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         tags_str = os.environ.get("VF_AGENT_TAGS", "executor")
@@ -48,6 +50,7 @@ class AgentConfig:
             sessions_dir=os.environ.get("VF_SESSIONS_DIR", "/sessions"),
             cxdb_url=os.environ.get("VF_CXDB_URL", ""),
             cxdb_public_url=os.environ.get("VF_CXDB_PUBLIC_URL", ""),
+            pod_name=os.environ.get("POD_NAME"),
         )
 
     def display(self) -> str:

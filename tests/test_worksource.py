@@ -66,10 +66,56 @@ class TestVtfWorkSource:
         result = await self.work_source.register("test-agent", ["executor", "claude"])
 
         # Verify the call and result
-        self.mock_client.register_agent.assert_called_once_with("test-agent", ["executor", "claude"])
+        self.mock_client.register_agent.assert_called_once_with(
+            "test-agent", ["executor", "claude"], pod_name=None
+        )
         assert isinstance(result, AgentInfo)
         assert result.id == "agent_123"
         assert result.token == "test_token_456"
+
+    async def test_register_sends_pod_name(self):
+        """Test that register passes pod_name from config to client."""
+        self.mock_client.register_agent.return_value = {
+            "id": "agent_123",
+            "name": "test-agent",
+            "token": "test_token_456"
+        }
+
+        ws = VtfWorkSource(self.mock_client, pod_name="vafi-executor-abc123")
+        result = await ws.register("test-agent", ["executor"])
+
+        self.mock_client.register_agent.assert_called_once_with(
+            "test-agent", ["executor"], pod_name="vafi-executor-abc123"
+        )
+
+    async def test_register_without_pod_name(self):
+        """Test that register works when pod_name is None."""
+        self.mock_client.register_agent.return_value = {
+            "id": "agent_123",
+            "name": "test-agent",
+            "token": "test_token_456"
+        }
+
+        ws = VtfWorkSource(self.mock_client, pod_name=None)
+        result = await ws.register("test-agent", ["executor"])
+
+        self.mock_client.register_agent.assert_called_once_with(
+            "test-agent", ["executor"], pod_name=None
+        )
+        assert isinstance(result, AgentInfo)
+
+    async def test_heartbeat_sends_pod_name(self):
+        """Test that agent_heartbeat includes pod_name in PATCH payload."""
+        self.mock_client.update_agent.return_value = {"id": "agent_123"}
+
+        ws = VtfWorkSource(self.mock_client, pod_name="vafi-executor-abc123")
+        await ws.agent_heartbeat("agent_123")
+
+        call_args = self.mock_client.update_agent.call_args
+        assert call_args[0][0] == "agent_123"
+        payload = call_args[0][1]
+        assert payload["pod_name"] == "vafi-executor-abc123"
+        assert "last_heartbeat" in payload
 
     async def test_poll_returns_rework_first(self):
         """Test that poll prioritizes rework over new work."""

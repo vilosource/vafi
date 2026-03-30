@@ -38,6 +38,15 @@ class TestAgentConfig:
         assert config.agent_role == "executor"
         assert config.poll_interval == 30
 
+    def test_config_reads_pod_name_from_env(self, monkeypatch):
+        monkeypatch.setenv("POD_NAME", "vafi-executor-abc123")
+        config = AgentConfig.from_env()
+        assert config.pod_name == "vafi-executor-abc123"
+
+    def test_config_pod_name_defaults_to_none(self):
+        config = AgentConfig.from_env()
+        assert config.pod_name is None
+
     def test_display(self):
         config = AgentConfig(agent_id="test-1", agent_role="executor")
         output = config.display()

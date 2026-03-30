@@ -131,6 +131,55 @@ class TestVtfClient:
         assert client.token == "auth_token_here"
 
     @pytest.mark.asyncio
+    async def test_register_agent_includes_pod_name(self, client, mock_response):
+        """Test that register_agent includes pod_name in POST payload."""
+        mock_response.json.return_value = {
+            "id": "agent_123",
+            "name": "test-agent",
+            "tags": ["executor"],
+            "token": "auth_token_here"
+        }
+
+        with patch.object(client._client, 'post', return_value=mock_response) as mock_post:
+            result = await client.register_agent(
+                "test-agent", ["executor"], pod_name="vafi-executor-abc123"
+            )
+
+        mock_post.assert_called_once_with(
+            "http://test.example.com/v1/agents/",
+            json={
+                "name": "test-agent",
+                "tags": ["executor"],
+                "pod_name": "vafi-executor-abc123",
+            },
+            headers={"Content-Type": "application/json"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_agent_includes_pod_name(self, client, mock_response):
+        """Test that PATCH body includes pod_name field."""
+        mock_response.json.return_value = {"id": "agent_123"}
+        client.token = "test-token"
+
+        with patch.object(client._client, 'patch', return_value=mock_response) as mock_patch:
+            await client.update_agent("agent_123", {
+                "last_heartbeat": "2026-03-30T10:00:00Z",
+                "pod_name": "vafi-executor-abc123",
+            })
+
+        mock_patch.assert_called_once_with(
+            "http://test.example.com/v1/agents/agent_123/",
+            json={
+                "last_heartbeat": "2026-03-30T10:00:00Z",
+                "pod_name": "vafi-executor-abc123",
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Token test-token",
+            }
+        )
+
+    @pytest.mark.asyncio
     async def test_list_claimable(self, client, mock_response):
         """Test listing claimable tasks."""
         mock_response.json.return_value = {

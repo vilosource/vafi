@@ -20,15 +20,22 @@ from ..vtf_client import VtfClient
 class VtfWorkSource:
     """WorkSource implementation backed by the vtf REST API."""
 
-    def __init__(self, client: VtfClient, tags: list[str] | None = None):
+    def __init__(
+        self,
+        client: VtfClient,
+        tags: list[str] | None = None,
+        pod_name: str | None = None,
+    ):
         """Initialize with a VtfClient instance.
 
         Args:
             client: VtfClient for API communication
             tags: Default agent tags for operations (can be overridden)
+            pod_name: Kubernetes pod name (from Downward API)
         """
         self._client = client
         self._default_tags = tags or []
+        self._pod_name = pod_name
 
     async def register(self, name: str, tags: list[str]) -> AgentInfo:
         """Register an agent with vtf.
@@ -43,7 +50,7 @@ class VtfWorkSource:
         Returns:
             Agent information including ID and auth token
         """
-        agent_data = await self._client.register_agent(name, tags)
+        agent_data = await self._client.register_agent(name, tags, pod_name=self._pod_name)
         # Store token on client for all subsequent authenticated calls
         self._client.token = agent_data["token"]
         return AgentInfo(
@@ -128,7 +135,10 @@ class VtfWorkSource:
         """
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        await self._client.update_agent(agent_id, {"last_heartbeat": now})
+        payload: dict[str, Any] = {"last_heartbeat": now}
+        if self._pod_name is not None:
+            payload["pod_name"] = self._pod_name
+        await self._client.update_agent(agent_id, payload)
 
     async def set_agent_offline(self, agent_id: str) -> None:
         """Mark agent as offline during graceful shutdown.

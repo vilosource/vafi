@@ -37,7 +37,7 @@ async def main():
     try:
         async with vtf_client:
             # Create VtfWorkSource
-            work_source = VtfWorkSource(client=vtf_client, tags=config.agent_tags)
+            work_source = VtfWorkSource(client=vtf_client, tags=config.agent_tags, pod_name=config.pod_name)
 
             # Create Controller
             controller = Controller(work_source=work_source, config=config)

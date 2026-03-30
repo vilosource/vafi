@@ -77,18 +77,23 @@ class VtfClient:
         elif not response.is_success:
             raise VtfError(f"HTTP {response.status_code}: {response.text}")
 
-    async def register_agent(self, name: str, tags: list[str]) -> dict[str, Any]:
+    async def register_agent(
+        self, name: str, tags: list[str], pod_name: str | None = None
+    ) -> dict[str, Any]:
         """Register a new agent with vtf.
 
         Args:
             name: Agent name
             tags: Agent tags for task matching
+            pod_name: Kubernetes pod name (from Downward API)
 
         Returns:
             Agent data including ID and auth token
         """
         url = f"{self.base_url}/v1/agents/"
-        payload = {"name": name, "tags": tags}
+        payload: dict[str, Any] = {"name": name, "tags": tags}
+        if pod_name is not None:
+            payload["pod_name"] = pod_name
 
         response = await self._client.post(url, json=payload, headers=self._headers())
         self._handle_error(response)
