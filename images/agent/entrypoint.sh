@@ -28,7 +28,15 @@ mkdir -p "${VF_SESSIONS_DIR:-/sessions}"
 if [ "$AGENT_ROLE" = "architect" ]; then
     REPO_URL="${VF_REPO_URL:-}"
     DEFAULT_BRANCH="${VF_DEFAULT_BRANCH:-main}"
-    WORKDIR="${VF_SESSIONS_DIR:-/sessions}/architect-$$"
+    SESSIONS_DIR="${VF_SESSIONS_DIR:-/sessions}"
+    PROJECT_SLUG="${VTF_PROJECT_SLUG:-}"
+
+    # Workdir: /sessions/{project_slug} for existing projects, /sessions/greenfield for new
+    if [ -n "$PROJECT_SLUG" ]; then
+        WORKDIR="${SESSIONS_DIR}/${PROJECT_SLUG}"
+    else
+        WORKDIR="${SESSIONS_DIR}/greenfield"
+    fi
 
     # Patch ~/.claude.json: skip onboarding + configure vtf MCP
     export WORKDIR
@@ -45,7 +53,7 @@ except (FileNotFoundError, json.JSONDecodeError):
 cfg['hasCompletedOnboarding'] = True
 cfg['theme'] = 'dark'
 
-workdir = os.environ.get('WORKDIR', '/sessions/architect')
+workdir = os.environ.get('WORKDIR', '/sessions/greenfield')
 projects = cfg.get('projects', {})
 projects[workdir] = {
     'hasTrustDialogAccepted': True,
@@ -78,12 +86,16 @@ with open(cfg_path, 'w') as f:
         else
             echo "Repo already cloned at $WORKDIR"
         fi
-        cd "$WORKDIR"
     else
         echo "No repo URL — greenfield mode"
         mkdir -p "$WORKDIR"
-        cd "$WORKDIR"
     fi
+
+    cd "$WORKDIR"
+
+    # Write sentinel: signals readiness and stores workdir path for WebSocket proxy
+    echo "$WORKDIR" > /tmp/ready
+    echo "Architect ready at $WORKDIR"
 
     # Autonomous mode: run with prompt and exit
     if [ -n "${VF_ARCHITECT_PROMPT:-}" ]; then
@@ -92,9 +104,7 @@ with open(cfg_path, 'w') as f:
             --max-turns "${VF_MAX_TURNS:-50}" --dangerously-skip-permissions
     fi
 
-    # Interactive mode: wait for attach
-    echo "Architect ready at ${WORKDIR:-$(pwd)}."
-    echo "Attach with: kubectl exec -it <pod> -- bash -c 'cd ${WORKDIR:-$(pwd)} && claude'"
+    # Interactive mode: wait for WebSocket attach
     exec sleep infinity
 fi
 
