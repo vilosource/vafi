@@ -129,7 +129,8 @@ class VtfClient:
         self,
         status: str,
         assigned_to: str | None = None,
-        expand: list[str] | None = None
+        expand: list[str] | None = None,
+        workplan: str | None = None,
     ) -> list[dict[str, Any]]:
         """List tasks with optional filtering.
 
@@ -137,6 +138,7 @@ class VtfClient:
             status: Task status to filter by
             assigned_to: Agent ID to filter by assignment
             expand: Related fields to expand (e.g., ["reviews", "links"])
+            workplan: Workplan ID to filter by
 
         Returns:
             List of task data
@@ -148,6 +150,8 @@ class VtfClient:
             params["assigned_to"] = assigned_to
         if expand:
             params["expand"] = ",".join(expand)
+        if workplan:
+            params["workplan"] = workplan
 
         response = await self._client.get(url, params=params, headers=self._headers())
         self._handle_error(response)

@@ -385,17 +385,55 @@ class Controller:
             notes = ctx["notes"]
             reviews = task_data.get("reviews", []) or []
 
+            # Collect prior summaries and workplan context (Phase B)
+            prior_summaries = self._extract_prior_summaries(task_data)
+            workplan_context = await self._build_workplan_context(task_data)
+
             content = build_context(
                 task_data=task_data,
                 notes=notes,
                 reviews=reviews,
                 role=self.config.agent_role,
+                prior_summaries=prior_summaries,
+                workplan_context=workplan_context,
             )
             write_context(workdir, content)
 
         except Exception as e:
             logger.warning(f"Failed to write context file for task {task.id}: {e}")
             # Non-fatal — agent can still work with just the prompt
+
+    def _extract_prior_summaries(self, task_data: dict) -> list[dict]:
+        """Extract execution summaries from prior attempts of this task.
+
+        For now, reads execution_summary from the task (single attempt).
+        Future: track multiple attempts via events.
+        """
+        summary = task_data.get("execution_summary")
+        if summary:
+            return [summary]
+        return []
+
+    async def _build_workplan_context(self, task_data: dict) -> str:
+        """Build workplan-level context if workplan is set."""
+        workplan_id = task_data.get("workplan")
+        if not workplan_id:
+            return ""
+
+        try:
+            from cxdb.workplan_context import build_workplan_context
+
+            class _VtfTaskSource:
+                def __init__(self, work_source):
+                    self._ws = work_source
+                async def list_tasks_by_workplan(self, wp_id):
+                    tasks = await self._ws._client.list_tasks(workplan=wp_id, status="done")
+                    return tasks
+
+            return await build_workplan_context(_VtfTaskSource(self.work_source), workplan_id)
+        except Exception as e:
+            logger.debug(f"Failed to build workplan context: {e}")
+            return ""
 
     def _log_task_details(self, task) -> None:
         """Log detailed information about a claimed task."""

@@ -5,6 +5,7 @@ Usage: python -m controller
 
 import asyncio
 import logging
+import os
 
 from controller.config import AgentConfig
 from controller.controller import Controller
@@ -59,12 +60,27 @@ async def main():
                     async def store_summary(self, task_id: str, summary: dict) -> None:
                         await self._client.update_task(task_id, {"execution_summary": summary})
 
+                # NL generator (Phase B) — uses Haiku via Anthropic API
+                nl_generator = None
+                anthropic_key = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+                anthropic_url = os.environ.get("ANTHROPIC_BASE_URL", "")
+                if anthropic_key and anthropic_url:
+                    import httpx as _httpx
+                    from cxdb.nl_summary import HaikuNLGenerator
+                    nl_generator = HaikuNLGenerator(
+                        http_client=_httpx.AsyncClient(),
+                        base_url=anthropic_url,
+                        api_key=anthropic_key,
+                    )
+                    logger.info("NL summary generator enabled (Haiku)")
+
                 summarizer = Summarizer(
                     cxdb=cxdb_client,
                     store=VtfSummaryStore(vtf_client),
                     config=SummarizerConfig(
                         cxdb_public_url=config.cxdb_public_url or config.cxdb_url,
                     ),
+                    nl_generator=nl_generator,
                 )
                 controller.set_summarizer(summarizer)
                 logger.info("Summarizer enabled (cxdb configured)")

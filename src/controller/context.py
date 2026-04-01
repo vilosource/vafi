@@ -17,6 +17,8 @@ def build_context(
     notes: list[dict],
     reviews: list[dict],
     role: str = "executor",
+    prior_summaries: list[dict] | None = None,
+    workplan_context: str = "",
 ) -> str:
     """Build the context markdown from vtf task data.
 
@@ -25,6 +27,8 @@ def build_context(
         notes: List of note dicts from vtf API
         reviews: List of review dicts from vtf API
         role: Agent role ("executor" or "judge") — affects the instruction
+        prior_summaries: Execution summaries from prior attempts (Phase B)
+        workplan_context: Accumulated key decisions from the workplan (Phase B)
 
     Returns:
         Markdown string for .vafi/context.md
@@ -91,6 +95,20 @@ def build_context(
                 if event["text"]:
                     lines.append(f"> {event['text']}")
                 lines.append("")
+
+    # Workplan context — cross-task knowledge (Phase B)
+    if workplan_context:
+        lines.append(workplan_context)
+        lines.append("")
+
+    # Prior attempt summaries (Phase B)
+    if prior_summaries:
+        from cxdb.dispatch import build_dispatch_prompt
+        # Use dispatch builder for the prior summaries section only
+        prior_section = build_dispatch_prompt(spec="", prior_summaries=prior_summaries, workplan_context="")
+        if prior_section.strip():
+            lines.append(prior_section.strip())
+            lines.append("")
 
     # Current instruction based on role and history
     lines.append("## Current Instruction")
