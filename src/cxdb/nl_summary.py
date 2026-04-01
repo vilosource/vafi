@@ -118,6 +118,14 @@ class HaikuNLGenerator:
         data = resp.json()
         text = data["content"][0]["text"]
 
+        # Strip markdown code fences if present
+        text = text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            # Remove first line (```json) and last line (```)
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            text = "\n".join(lines)
+
         # Parse JSON response
         try:
             result = json.loads(text)

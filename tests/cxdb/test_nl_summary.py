@@ -123,6 +123,16 @@ class TestHaikuNLGenerator:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_handles_markdown_fenced_json(self):
+        """Haiku sometimes wraps JSON in ```json ... ``` fences."""
+        fenced = '```json\n{"one_liner": "Did it", "what_happened": "Built stuff", "key_decisions": [], "if_failed": null}\n```'
+        http = FakeAnthropicClient(fenced)
+        gen = HaikuNLGenerator(http_client=http, base_url="http://fake", api_key="key")
+        result = await gen.generate(MOCK_STRUCTURED, [], "completed", None)
+        assert result is not None
+        assert result["one_liner"] == "Did it"
+
+    @pytest.mark.asyncio
     async def test_one_liner_under_100_chars(self):
         http = FakeAnthropicClient(VALID_NL_JSON)
         gen = HaikuNLGenerator(http_client=http, base_url="http://fake", api_key="key")
