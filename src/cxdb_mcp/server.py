@@ -24,7 +24,12 @@ logger = logging.getLogger("cxdb_mcp")
 CXDB_URL = os.environ.get("CXDB_URL", "http://vafi-cxdb:80")
 CXDB_PUBLIC_URL = os.environ.get("CXDB_PUBLIC_URL", CXDB_URL)
 
-mcp = FastMCP("cxdb-context", instructions="Query agent execution traces from cxdb.")
+mcp = FastMCP(
+    "cxdb-context",
+    instructions="Query agent execution traces from cxdb.",
+    host="0.0.0.0",
+    port=8090,
+)
 _client = CxdbClient(base_url=CXDB_URL)
 
 
@@ -149,7 +154,7 @@ async def cxdb_list_sessions(
 def run():
     """Entry point for the MCP server."""
     logging.basicConfig(level=logging.INFO)
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8090)
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
