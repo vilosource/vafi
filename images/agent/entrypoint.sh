@@ -64,14 +64,16 @@ cfg['projects'] = projects
 
 mcp_url = os.environ.get('VF_VTF_MCP_URL', '')
 vtf_token = os.environ.get('VF_VTF_TOKEN', '')
+project_slug = os.environ.get('VTF_PROJECT_SLUG', '')
 if mcp_url and vtf_token:
+    vtf_headers = {'Authorization': f'Token {vtf_token}'}
+    if project_slug:
+        vtf_headers['X-VTF-Project'] = project_slug
     cfg['mcpServers'] = {
         'vtf': {
             'type': 'http',
             'url': mcp_url,
-            'headers': {
-                'Authorization': f'Token {vtf_token}'
-            }
+            'headers': vtf_headers,
         }
     }
 
