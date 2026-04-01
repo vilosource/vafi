@@ -75,6 +75,14 @@ if mcp_url and vtf_token:
         }
     }
 
+# Add cxdb MCP server for architect agents
+cxdb_mcp_url = os.environ.get('VF_CXDB_MCP_URL', '')
+if cxdb_mcp_url:
+    cfg.setdefault('mcpServers', {})['cxdb'] = {
+        'type': 'http',
+        'url': cxdb_mcp_url,
+    }
+
 with open(cfg_path, 'w') as f:
     json.dump(cfg, f, indent=2)
 " 2>&1 && echo "Patched ~/.claude.json" || echo "Warning: failed to patch ~/.claude.json"
