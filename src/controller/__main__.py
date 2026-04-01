@@ -42,6 +42,33 @@ async def main():
             # Create Controller
             controller = Controller(work_source=work_source, config=config)
 
+            # Wire up summarizer if cxdb is configured
+            if config.cxdb_url:
+                from cxdb.client import CxdbClient
+                from cxdb.summarizer import Summarizer, SummarizerConfig
+
+                cxdb_client = CxdbClient(
+                    base_url=config.cxdb_url,
+                    timeout=10.0,
+                )
+
+                class VtfSummaryStore:
+                    """Adapter: stores execution summary via VtfClient PATCH."""
+                    def __init__(self, client: VtfClient):
+                        self._client = client
+                    async def store_summary(self, task_id: str, summary: dict) -> None:
+                        await self._client.update_task(task_id, {"execution_summary": summary})
+
+                summarizer = Summarizer(
+                    cxdb=cxdb_client,
+                    store=VtfSummaryStore(vtf_client),
+                    config=SummarizerConfig(
+                        cxdb_public_url=config.cxdb_public_url or config.cxdb_url,
+                    ),
+                )
+                controller.set_summarizer(summarizer)
+                logger.info("Summarizer enabled (cxdb configured)")
+
             # Run the controller
             await controller.run()
 

@@ -10,8 +10,6 @@ import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
-
 from .config import AgentConfig
 from .context import build_context, write_context
 from .gates import GateRunner
@@ -45,6 +43,11 @@ class Controller:
         self._shutdown = asyncio.Event()
         self._agent_info = None
         self._invoker = HarnessInvoker(config)
+        self._summarizer = None  # Set via set_summarizer() after construction
+
+    def set_summarizer(self, summarizer) -> None:
+        """Inject an optional summarizer for execution trace summarization."""
+        self._summarizer = summarizer
 
     async def run(self) -> None:
         """Main controller loop.
@@ -153,8 +156,11 @@ class Controller:
             # Execute the task
             result = await self.execute(claimed_task)
 
-            # Link execution trace from cxdb (best-effort)
-            await self._post_trace_note(task.id)
+            # Summarize execution trace from cxdb (best-effort, non-blocking)
+            if self._summarizer:
+                asyncio.create_task(self._summarize_best_effort(task.id))
+            else:
+                await self._post_trace_note(task.id)
 
             # Report result
             if result.success:
@@ -406,6 +412,17 @@ class Controller:
             logger.info(f"{i:3}: {line}")
         logger.info("=== End Task Details ===")
 
+    async def _summarize_best_effort(self, task_id: str) -> None:
+        """Run the summarizer in the background. Best-effort — never fails the task."""
+        try:
+            summary = await self._summarizer.summarize_task(task_id)
+            if summary:
+                logger.info(f"Stored execution summary for task {task_id}")
+            else:
+                logger.debug(f"No summary generated for task {task_id}")
+        except Exception as e:
+            logger.warning(f"Summarization failed for task {task_id}: {e}")
+
     async def _post_trace_note(self, task_id: str) -> None:
         """Look up the cxdb context for a task and post its URL as a vtf note."""
         if not self.config.cxdb_url:
@@ -427,6 +444,7 @@ class Controller:
 
     async def _lookup_cxdb_context(self, task_id: str) -> int | None:
         """Query cxdb for a context matching task:<task_id> label."""
+        import httpx
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.config.cxdb_url}/v1/contexts",

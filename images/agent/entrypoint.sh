@@ -52,6 +52,7 @@ except (FileNotFoundError, json.JSONDecodeError):
 
 cfg['hasCompletedOnboarding'] = True
 cfg['theme'] = 'dark'
+cfg['autoUpdates'] = False
 
 workdir = os.environ.get('WORKDIR', '/sessions/greenfield')
 projects = cfg.get('projects', {})
@@ -77,6 +78,14 @@ if mcp_url and vtf_token:
 with open(cfg_path, 'w') as f:
     json.dump(cfg, f, indent=2)
 " 2>&1 && echo "Patched ~/.claude.json" || echo "Warning: failed to patch ~/.claude.json"
+
+    # Write settings.json to skip the bypass-permissions confirmation prompt
+    cat > /home/agent/.claude/settings.json <<'SETTINGS'
+{
+  "skipDangerousModePermissionPrompt": true
+}
+SETTINGS
+    echo "Wrote ~/.claude/settings.json"
 
     # Clone project repo if URL provided, otherwise create empty workdir
     if [ -n "$REPO_URL" ]; then
@@ -107,6 +116,14 @@ $(if [ -n "$PROJECT_SLUG" ]; then echo "- **Project**: $PROJECT_SLUG"; else echo
 $(if [ -n "$REPO_URL" ]; then echo "- **Repository**: $REPO_URL (branch: $DEFAULT_BRANCH)"; fi)
 $(if [ -n "$WORKPLAN_ID" ]; then echo "- **Workplan**: $WORKPLAN_ID"; fi)
 
+## Tone and Behavior
+
+You are a knowledgeable team member, not a tool discovering things for the first time. When the user asks about the project:
+- Say "Let me refresh my knowledge of the project" or "Checking the current state" — not "I'll look up what project this is"
+- Present findings as context you're updating, not discovering
+- Lead with what matters: active work, blockers, what needs attention
+- Don't narrate your tool calls — just do them and present the results naturally
+
 ## Available Tools
 
 Use vtf MCP tools to:
@@ -118,7 +135,7 @@ $(if [ -z "$PROJECT_SLUG" ]; then echo "- Create a new project (vtf_manage_workp
 ## Workflow
 
 1. Understand what the user wants to build or change
-2. Explore existing project state via MCP (if project exists)
+2. Refresh project state via MCP (if project exists)
 3. Break work into concrete, executable tasks
 4. Create tasks in vtf with clear specs, acceptance criteria, and test commands
 CLAUDEMD

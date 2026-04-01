@@ -291,7 +291,17 @@ Claude Code has a first-run experience (theme selection, trust dialog). In a pod
 }
 ```
 
-Additionally, `--dangerously-skip-permissions` bypasses all tool permission prompts at runtime.
+The entrypoint also writes `~/.claude/settings.json` to suppress the bypass-permissions confirmation dialog:
+
+```json
+{
+  "skipDangerousModePermissionPrompt": true
+}
+```
+
+Without this, `--dangerously-skip-permissions` still shows an interactive TUI confirmation ("Yes, I accept") that blocks WebSocket and non-TTY sessions.
+
+Together, `--dangerously-skip-permissions` + this setting bypass all permission prompts at runtime without user interaction.
 
 ---
 

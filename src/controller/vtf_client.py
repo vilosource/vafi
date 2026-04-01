@@ -334,6 +334,23 @@ class VtfClient:
 
         return response.json()
 
+    async def update_task(self, task_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Partial update of task fields.
+
+        Args:
+            task_id: Task ID to update
+            data: Fields to update (e.g., execution_summary)
+
+        Returns:
+            Updated task data
+        """
+        url = f"{self.base_url}/v1/tasks/{task_id}/"
+
+        response = await self._client.patch(url, json=data, headers=self._headers())
+        self._handle_error(response)
+
+        return response.json()
+
     async def submit_task(self, task_id: str) -> None:
         """Submit a task from draft to todo status.
 
