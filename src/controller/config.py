@@ -30,6 +30,8 @@ class AgentConfig:
     pi_provider: str = "anthropic"
     pi_model: str = "claude-sonnet-4-20250514"
 
+    output_format: str = "claude_json"
+
     cxdb_url: str = ""
     cxdb_public_url: str = ""
 
@@ -55,6 +57,7 @@ class AgentConfig:
             harness=os.environ.get("VF_HARNESS", "claude"),
             pi_provider=os.environ.get("VF_PI_PROVIDER", "anthropic"),
             pi_model=os.environ.get("VF_PI_MODEL", "claude-sonnet-4-20250514"),
+            output_format=os.environ.get("VF_OUTPUT_FORMAT", "claude_json"),
             cxdb_url=os.environ.get("VF_CXDB_URL", ""),
             cxdb_public_url=os.environ.get("VF_CXDB_PUBLIC_URL", ""),
             pod_name=os.environ.get("POD_NAME"),

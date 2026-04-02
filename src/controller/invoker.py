@@ -147,51 +147,12 @@ class HarnessInvoker:
             logger.error("Git clone timed out after 60 seconds")
             raise
 
-    def _build_claude_command(self, prompt: str, task_id: str) -> list[str]:
-        """Build Claude Code CLI command."""
-        claude_args = [
-            "-p", prompt,
-            "--output-format", "json",
-            "--dangerously-skip-permissions"
-        ]
-        if self.config.max_turns > 0:
-            claude_args.extend(["--max-turns", str(self.config.max_turns)])
-
-        if self.config.cxdb_url:
-            return [
-                "cxtx", "--url", self.config.cxdb_url,
-                "--label", f"task:{task_id}",
-                "claude", "--",
-            ] + claude_args
-        return ["claude"] + claude_args
-
-    def _build_pi_command(self, prompt: str, task_id: str) -> list[str]:
-        """Build Pi coding agent CLI command."""
-        pi_args = [
-            "-p", prompt,
-            "--provider", self.config.pi_provider,
-            "--model", self.config.pi_model,
-            "--mode", "json",
-            "--no-session",
-            "--append-system-prompt",
-            f"/opt/vf-agent/methodologies/{self.config.agent_role}.md",
-        ]
-        if self.config.max_turns > 0:
-            pi_args.extend(["--max-turns", str(self.config.max_turns)])
-
-        if self.config.cxdb_url:
-            return [
-                "cxtx", "--url", self.config.cxdb_url,
-                "--label", f"task:{task_id}",
-                "pi", "--",
-            ] + pi_args
-        return ["pi"] + pi_args
-
     async def _run_harness(self, prompt: str, workdir: Path, task_id: str) -> subprocess.CompletedProcess:
-        """Run the AI harness as a subprocess.
+        """Run the AI harness via /opt/vf-harness/run.sh.
 
-        Builds the CLI command for the configured harness (claude or pi)
-        and executes it with proper timeout and working directory settings.
+        The run.sh script inside the container handles all harness-specific
+        CLI flags, cxtx wrapping, and methodology delivery. The invoker
+        only sets environment variables.
 
         Args:
             prompt: Prompt text to send to the harness
@@ -200,15 +161,17 @@ class HarnessInvoker:
 
         Returns:
             subprocess.CompletedProcess with stdout/stderr and exit code
-
-        Raises:
-            subprocess.TimeoutExpired: If harness exceeds task timeout
-            FileNotFoundError: If harness CLI is not available
         """
-        if self.config.harness == "pi":
-            cmd = self._build_pi_command(prompt, task_id)
-        else:
-            cmd = self._build_claude_command(prompt, task_id)
+        import os as _os
+        env = dict(_os.environ)
+        env["VF_PROMPT"] = prompt
+        env["VF_TASK_ID"] = task_id
+        if self.config.max_turns > 0:
+            env["VF_MAX_TURNS"] = str(self.config.max_turns)
+        if self.config.cxdb_url:
+            env["VF_CXDB_URL"] = self.config.cxdb_url
+
+        cmd = ["/opt/vf-harness/run.sh"]
 
         logger.info(f"Starting harness for task {task_id} with timeout {self.config.task_timeout}s")
         logger.debug(f"Harness command: {' '.join(cmd)}")
@@ -219,6 +182,7 @@ class HarnessInvoker:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(workdir),
+                env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -282,10 +246,13 @@ class HarnessInvoker:
         if result.returncode != 0:
             return self._handle_infrastructure_failure(result, task_id)
 
-        # Branch on harness type
-        if self.config.harness == "pi":
-            return self._parse_pi_output(result.stdout, task_id)
-        return self._parse_claude_output(result.stdout, task_id)
+        # Select parser by output format from config
+        parsers = {
+            "claude_json": self._parse_claude_output,
+            "pi_jsonl": self._parse_pi_output,
+        }
+        parser = parsers.get(self.config.output_format, self._parse_claude_output)
+        return parser(result.stdout, task_id)
 
     def _parse_claude_output(self, stdout: str, task_id: str) -> ExecutionResult:
         """Parse Claude Code JSON output into ExecutionResult."""
