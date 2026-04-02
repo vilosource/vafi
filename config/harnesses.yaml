@@ -1,6 +1,6 @@
 harnesses:
   claude:
-    image: harbor.viloforge.com/vafi/vafi-agent:60e762d
+    image: harbor.viloforge.com/vafi/vafi-agent:2c64c34
     description: Claude Code CLI
     output_format: claude_json
     supports_rpc: false
@@ -12,7 +12,7 @@ harnesses:
           vtf-token: VF_VTF_TOKEN
 
   pi:
-    image: harbor.viloforge.com/vafi/vafi-agent-pi:60e762d
+    image: harbor.viloforge.com/vafi/vafi-agent-pi:2c64c34
     description: Pi coding agent
     output_format: pi_jsonl
     supports_rpc: true
