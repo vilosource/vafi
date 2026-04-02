@@ -71,14 +71,7 @@ class TestAgentConfig:
         assert "harness:" in output
         assert "claude" in output
 
-    def test_display_pi_shows_provider_and_model(self):
-        config = AgentConfig(agent_id="test-pi", harness="pi", pi_provider="anthropic", pi_model="sonnet")
+    def test_display_shows_harness(self):
+        config = AgentConfig(agent_id="test-pi", harness="pi")
         output = config.display()
-        assert "pi_provider:" in output
-        assert "pi_model:" in output
-
-    def test_display_claude_hides_pi_fields(self):
-        config = AgentConfig(agent_id="test-claude", harness="claude")
-        output = config.display()
-        assert "pi_provider:" not in output
-        assert "pi_model:" not in output
+        assert "harness:" in output

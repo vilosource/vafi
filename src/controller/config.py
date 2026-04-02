@@ -81,7 +81,4 @@ class AgentConfig:
             f"  cxdb_url:          {self.cxdb_url or '(disabled)'}",
             f"  cxdb_public_url:   {self.cxdb_public_url or '(same as cxdb_url)'}",
         ]
-        if self.harness == "pi":
-            lines.insert(-2, f"  pi_provider:        {self.pi_provider}")
-            lines.insert(-2, f"  pi_model:           {self.pi_model}")
         return "\n".join(lines)
