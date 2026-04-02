@@ -60,7 +60,7 @@ class PodProcessManager:
             },
             "spec": {
                 "containers": [{
-                    "name": "pi-agent",
+                    "name": "agent",
                     "image": self.image,
                     "command": ["sleep", "infinity"],
                     "env": env,
@@ -82,36 +82,13 @@ class PodProcessManager:
             },
         }
 
-    def build_exec_command(
-        self,
-        project: str,
-        methodology: str = "",
-        provider: str = "anthropic",
-        model: str = "claude-sonnet-4-20250514",
-        thinking_level: str = "medium",
-    ) -> list[str]:
-        """Build Pi exec command for a locked session.
+    def build_exec_command(self) -> list[str]:
+        """Build exec command for a locked session.
 
-        Wraps Pi in a bash command that first writes models.json
-        (needed for z.ai proxy base URL) then starts Pi in RPC mode.
+        Uses the standard connect script from the harness image.
+        The init.sh already ran at pod startup, so config is ready.
         """
-        session_dir = f"/sessions/{_sanitize_k8s_name(project)}/"
-        pi_args = f"--mode rpc --session-dir {session_dir} --provider {provider} --model {model}"
-        if methodology:
-            pi_args += f" --append-system-prompt {methodology}"
-        if thinking_level:
-            pi_args += f" --thinking {thinking_level}"
-
-        # Write models.json via heredoc (with variable expansion), then start Pi
-        setup_script = (
-            f'mkdir -p ~/.pi/agent && '
-            f'cat > ~/.pi/agent/models.json << PIEOF\n'
-            f'{{"providers": {{"anthropic": {{"baseUrl": "$ANTHROPIC_BASE_URL", "api": "anthropic-messages", "apiKey": "ANTHROPIC_API_KEY", "models": [{{"id": "{model}"}}]}}}}}}\n'
-            f'PIEOF\n'
-            f'exec pi {pi_args}'
-        )
-
-        return ["bash", "-c", setup_script]
+        return ["/opt/vf-harness/connect.sh"]
 
     async def create_or_get_pod(self, spec: dict[str, Any]) -> str:
         """Create pod if it doesn't exist, return pod name.
@@ -169,7 +146,7 @@ class PodProcessManager:
             pod_name,
             self.namespace,
             command=command,
-            container="pi-agent",
+            container="agent",
             stdin=True,
             stdout=True,
             stderr=True,

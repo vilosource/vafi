@@ -108,36 +108,24 @@ class TestBuildPiEnv:
 
 
 class TestPiSession:
-    def test_build_command_uses_rpc_mode(self):
-        """Design spec: ephemeral uses --mode rpc --no-session."""
+    def test_build_command_uses_run_sh(self):
+        """Ephemeral command is /opt/vf-harness/run.sh."""
+        config = PiSessionConfig()
+        session = PiSession(config)
+        cmd = session.build_command()
+        assert cmd == ["/opt/vf-harness/run.sh"]
+
+    def test_build_command_no_harness_names(self):
+        """build_command has no harness-specific CLI flags."""
         config = PiSessionConfig(
-            provider="anthropic",
-            model="claude-sonnet-4-20250514",
             methodology="/opt/vf-agent/methodologies/assistant.md",
+            thinking_level="high",
+            max_turns=25,
         )
         session = PiSession(config)
         cmd = session.build_command()
-        assert cmd[0] == "pi"
-        assert "--mode" in cmd
-        idx = cmd.index("--mode")
-        assert cmd[idx + 1] == "rpc"
-        assert "--no-session" in cmd
-        assert "--provider" in cmd
-        assert "--append-system-prompt" in cmd
-
-    def test_build_command_with_thinking(self):
-        config = PiSessionConfig(thinking_level="high")
-        session = PiSession(config)
-        cmd = session.build_command()
-        assert "--thinking" in cmd
-        assert "high" in cmd
-
-    def test_build_command_with_max_turns(self):
-        config = PiSessionConfig(max_turns=25)
-        session = PiSession(config)
-        cmd = session.build_command()
-        assert "--max-turns" in cmd
-        assert "25" in cmd
+        assert "pi" not in cmd
+        assert "--mode" not in cmd
 
     def test_parse_output_extracts_input_tokens(self):
         """input_tokens must be parsed, not hardcoded to 0."""

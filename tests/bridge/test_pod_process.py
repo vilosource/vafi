@@ -39,20 +39,11 @@ class TestPodProcessManager:
         assert name.islower() or "-" in name
         assert all(c.isalnum() or c == "-" for c in name)
 
-    @pytest.mark.asyncio
-    async def test_exec_command_uses_rpc_mode(self):
-        """Pi exec command uses bash -c wrapper with --mode rpc and --session-dir."""
+    def test_exec_command_uses_connect_sh(self):
+        """Exec command uses /opt/vf-harness/connect.sh for all harnesses."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
-        cmd = mgr.build_exec_command(
-            project="my-proj",
-            methodology="/opt/vf-agent/methodologies/architect.md",
-        )
-        assert cmd[0] == "bash"
-        assert cmd[1] == "-c"
-        script = cmd[2]
-        assert "--mode rpc" in script
-        assert "--session-dir" in script
-        assert "models.json" in script
+        cmd = mgr.build_exec_command()
+        assert cmd == ["/opt/vf-harness/connect.sh"]
 
 
 class TestPodSession:

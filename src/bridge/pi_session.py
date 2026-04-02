@@ -73,21 +73,8 @@ class PiSession:
         self.config = config
 
     def build_command(self) -> list[str]:
-        """Build the Pi CLI command. Design spec: --mode rpc for all sessions."""
-        cmd = [
-            "pi",
-            "--mode", "rpc",
-            "--provider", self.config.provider,
-            "--model", self.config.model,
-            "--no-session",
-        ]
-        if self.config.methodology:
-            cmd.extend(["--append-system-prompt", self.config.methodology])
-        if self.config.thinking_level:
-            cmd.extend(["--thinking", self.config.thinking_level])
-        if self.config.max_turns > 0:
-            cmd.extend(["--max-turns", str(self.config.max_turns)])
-        return cmd
+        """Build harness command. Uses /opt/vf-harness/run.sh for headless invocation."""
+        return ["/opt/vf-harness/run.sh"]
 
     def parse_output(self, stdout: str) -> dict[str, Any]:
         """Parse Pi JSONL output into structured result."""
