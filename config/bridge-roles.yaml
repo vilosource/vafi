@@ -1,0 +1,21 @@
+roles:
+  architect:
+    session_type: locked
+    model: claude-sonnet-4-20250514
+    thinking_level: medium
+    methodology: /opt/vf-agent/methodologies/architect.md
+    mcp_tools:
+      - vtf
+      - cxdb
+    idle_timeout_hours: 4
+    description: Interactive planning and design sessions
+
+  assistant:
+    session_type: ephemeral
+    model: claude-sonnet-4-20250514
+    thinking_level: low
+    methodology: ""
+    mcp_tools:
+      - vtf
+      - cxdb
+    description: Task management, status queries, quick operations
