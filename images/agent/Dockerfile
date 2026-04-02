@@ -1,5 +1,6 @@
 ARG REGISTRY=vafi
-FROM ${REGISTRY}/vafi-claude:latest
+ARG HARNESS_IMAGE=${REGISTRY}/vafi-claude:latest
+FROM ${HARNESS_IMAGE}
 
 # Copy controller source code (pyproject.toml expects src/ layout)
 COPY src/ /opt/vf-agent/src/

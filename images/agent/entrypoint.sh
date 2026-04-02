@@ -1,20 +1,70 @@
 #!/bin/bash
 set -euo pipefail
 
-# Copy methodology to CLAUDE.md based on VF_AGENT_ROLE
+# Determine harness and role
+HARNESS="${VF_HARNESS:-claude}"
 AGENT_ROLE="${VF_AGENT_ROLE:-executor}"
 METHODOLOGY_FILE="/opt/vf-agent/methodologies/${AGENT_ROLE}.md"
 
-# Ensure .claude directory exists
-mkdir -p /home/agent/.claude
+# Copy methodology based on harness type
+if [ "$HARNESS" = "pi" ]; then
+    # Pi: methodology delivered via --append-system-prompt flag in invoker
+    # No file copy needed for executor/judge (invoker passes the flag)
+    # For architect, we pass it on the command line below
+    if [ -f "$METHODOLOGY_FILE" ]; then
+        echo "Methodology available for role: $AGENT_ROLE (delivered via --append-system-prompt)"
+    else
+        echo "Warning: No methodology found for role '$AGENT_ROLE'"
+    fi
 
-if [ -f "$METHODOLOGY_FILE" ]; then
-    echo "Setting up methodology for role: $AGENT_ROLE"
-    cp "$METHODOLOGY_FILE" /home/agent/.claude/CLAUDE.md
+    # Write Pi config files from environment
+    mkdir -p /home/agent/.pi/agent
+    python3 -c "
+import json, os
+
+# models.json — provider, model, baseUrl for z.ai proxy
+provider = os.environ.get('VF_PI_PROVIDER', 'anthropic')
+model = os.environ.get('VF_PI_MODEL', 'claude-sonnet-4-20250514')
+base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
+api_key_env = 'ANTHROPIC_API_KEY'
+
+provider_cfg = {
+    'api': 'anthropic-messages',
+    'apiKey': api_key_env,
+    'models': [{'id': model, 'name': model}],
+}
+if base_url:
+    provider_cfg['baseUrl'] = base_url
+
+models = {'providers': {provider: provider_cfg}}
+with open(os.path.expanduser('~/.pi/agent/models.json'), 'w') as f:
+    json.dump(models, f, indent=2)
+
+# mcp.json — vtf and cxdb MCP endpoints
+vtf_mcp = os.environ.get('VF_VTF_MCP_URL', '')
+cxdb_mcp = os.environ.get('VF_CXDB_MCP_URL', '')
+servers = {}
+if vtf_mcp:
+    servers['vtf'] = {'url': vtf_mcp, 'lifecycle': 'lazy'}
+if cxdb_mcp:
+    servers['cxdb'] = {'url': cxdb_mcp, 'lifecycle': 'lazy'}
+if servers:
+    with open(os.path.expanduser('~/.pi/agent/mcp.json'), 'w') as f:
+        json.dump({'mcpServers': servers}, f, indent=2)
+" 2>&1 && echo "Wrote Pi config files" || echo "Warning: failed to write Pi config"
+
 else
-    echo "Warning: No methodology found for role '$AGENT_ROLE'"
-    echo "Available methodologies:"
-    ls -1 /opt/vf-agent/methodologies/ || echo "None found"
+    # Claude: copy methodology to CLAUDE.md
+    mkdir -p /home/agent/.claude
+
+    if [ -f "$METHODOLOGY_FILE" ]; then
+        echo "Setting up methodology for role: $AGENT_ROLE"
+        cp "$METHODOLOGY_FILE" /home/agent/.claude/CLAUDE.md
+    else
+        echo "Warning: No methodology found for role '$AGENT_ROLE'"
+        echo "Available methodologies:"
+        ls -1 /opt/vf-agent/methodologies/ || echo "None found"
+    fi
 fi
 
 # Configure git identity for commits
@@ -158,9 +208,18 @@ CLAUDEMD
 
     # Autonomous mode: run with prompt and exit
     if [ -n "${VF_ARCHITECT_PROMPT:-}" ]; then
-        echo "Running architect in autonomous mode..."
-        exec claude -p "$VF_ARCHITECT_PROMPT" --output-format json \
-            --max-turns "${VF_MAX_TURNS:-50}" --dangerously-skip-permissions
+        if [ "$HARNESS" = "pi" ]; then
+            echo "Running Pi architect in autonomous mode..."
+            PI_ARGS="-p $VF_ARCHITECT_PROMPT --provider ${VF_PI_PROVIDER:-anthropic} --model ${VF_PI_MODEL:-claude-sonnet-4-20250514} --mode json --no-session --max-turns ${VF_MAX_TURNS:-50}"
+            if [ -f "$METHODOLOGY_FILE" ]; then
+                PI_ARGS="$PI_ARGS --append-system-prompt $METHODOLOGY_FILE"
+            fi
+            exec pi $PI_ARGS
+        else
+            echo "Running architect in autonomous mode..."
+            exec claude -p "$VF_ARCHITECT_PROMPT" --output-format json \
+                --max-turns "${VF_MAX_TURNS:-50}" --dangerously-skip-permissions
+        fi
     fi
 
     # Interactive mode: wait for WebSocket attach

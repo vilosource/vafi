@@ -147,11 +147,51 @@ class HarnessInvoker:
             logger.error("Git clone timed out after 60 seconds")
             raise
 
+    def _build_claude_command(self, prompt: str, task_id: str) -> list[str]:
+        """Build Claude Code CLI command."""
+        claude_args = [
+            "-p", prompt,
+            "--output-format", "json",
+            "--dangerously-skip-permissions"
+        ]
+        if self.config.max_turns > 0:
+            claude_args.extend(["--max-turns", str(self.config.max_turns)])
+
+        if self.config.cxdb_url:
+            return [
+                "cxtx", "--url", self.config.cxdb_url,
+                "--label", f"task:{task_id}",
+                "claude", "--",
+            ] + claude_args
+        return ["claude"] + claude_args
+
+    def _build_pi_command(self, prompt: str, task_id: str) -> list[str]:
+        """Build Pi coding agent CLI command."""
+        pi_args = [
+            "-p", prompt,
+            "--provider", self.config.pi_provider,
+            "--model", self.config.pi_model,
+            "--mode", "json",
+            "--no-session",
+            "--append-system-prompt",
+            f"/opt/vf-agent/methodologies/{self.config.agent_role}.md",
+        ]
+        if self.config.max_turns > 0:
+            pi_args.extend(["--max-turns", str(self.config.max_turns)])
+
+        if self.config.cxdb_url:
+            return [
+                "cxtx", "--url", self.config.cxdb_url,
+                "--label", f"task:{task_id}",
+                "pi", "--",
+            ] + pi_args
+        return ["pi"] + pi_args
+
     async def _run_harness(self, prompt: str, workdir: Path, task_id: str) -> subprocess.CompletedProcess:
         """Run the AI harness as a subprocess.
 
-        Builds the Claude Code CLI command and executes it with proper
-        timeout and working directory settings.
+        Builds the CLI command for the configured harness (claude or pi)
+        and executes it with proper timeout and working directory settings.
 
         Args:
             prompt: Prompt text to send to the harness
@@ -163,27 +203,12 @@ class HarnessInvoker:
 
         Raises:
             subprocess.TimeoutExpired: If harness exceeds task timeout
-            FileNotFoundError: If claude CLI is not available
+            FileNotFoundError: If harness CLI is not available
         """
-        # Build claude args
-        claude_args = [
-            "-p", prompt,
-            "--output-format", "json",
-            "--dangerously-skip-permissions"
-        ]
-        if self.config.max_turns > 0:
-            claude_args.extend(["--max-turns", str(self.config.max_turns)])
-
-        # Wrap with cxtx if cxdb is configured
-        if self.config.cxdb_url:
-            cmd = [
-                "cxtx",
-                "--url", self.config.cxdb_url,
-                "--label", f"task:{task_id}",
-                "claude", "--",
-            ] + claude_args
+        if self.config.harness == "pi":
+            cmd = self._build_pi_command(prompt, task_id)
         else:
-            cmd = ["claude"] + claude_args
+            cmd = self._build_claude_command(prompt, task_id)
 
         logger.info(f"Starting harness for task {task_id} with timeout {self.config.task_timeout}s")
         logger.debug(f"Harness command: {' '.join(cmd)}")
@@ -257,23 +282,28 @@ class HarnessInvoker:
         if result.returncode != 0:
             return self._handle_infrastructure_failure(result, task_id)
 
-        # Try to parse JSON output
+        # Branch on harness type
+        if self.config.harness == "pi":
+            return self._parse_pi_output(result.stdout, task_id)
+        return self._parse_claude_output(result.stdout, task_id)
+
+    def _parse_claude_output(self, stdout: str, task_id: str) -> ExecutionResult:
+        """Parse Claude Code JSON output into ExecutionResult."""
         try:
-            output_data = json.loads(result.stdout)
+            output_data = json.loads(stdout)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse harness JSON output for task {task_id}: {e}")
+            logger.error(f"Failed to parse Claude JSON output for task {task_id}: {e}")
             return ExecutionResult(
                 success=False,
                 session_id=None,
-                completion_report=f"Invalid JSON output: {str(e)}\n\nRaw output:\n{result.stdout}",
+                completion_report=f"Invalid JSON output: {str(e)}\n\nRaw output:\n{stdout}",
                 cost_usd=0.0,
                 num_turns=0,
                 gate_results=[]
             )
 
-        # Level 2: Harness error (is_error == true)
         if output_data.get("is_error", False):
-            logger.warning(f"Harness reported error for task {task_id}")
+            logger.warning(f"Claude reported error for task {task_id}")
             return ExecutionResult(
                 success=False,
                 session_id=output_data.get("session_id"),
@@ -283,15 +313,79 @@ class HarnessInvoker:
                 gate_results=[]
             )
 
-        # Level 3: Success (gates will be run later by controller)
-        logger.info(f"Harness completed successfully for task {task_id}")
+        logger.info(f"Claude completed successfully for task {task_id}")
         return ExecutionResult(
             success=True,
             session_id=output_data.get("session_id"),
             completion_report=output_data.get("result", "Task completed"),
             cost_usd=output_data.get("total_cost_usd", 0.0),
             num_turns=output_data.get("num_turns", 0),
-            gate_results=[]  # Gates run separately by controller
+            gate_results=[]
+        )
+
+    def _parse_pi_output(self, stdout: str, task_id: str) -> ExecutionResult:
+        """Parse Pi JSONL streaming output into ExecutionResult.
+
+        Pi's --mode json produces one JSON event per line. Key events:
+        - session: contains session ID
+        - turn_end: one per turn (count for num_turns)
+        - agent_end: final event with full conversation and usage
+        """
+        session_id = None
+        completion_text = ""
+        total_tokens = 0
+        cost_usd = 0.0
+        num_turns = 0
+
+        for line in stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get("type")
+
+            if event_type == "session":
+                session_id = event.get("id")
+
+            elif event_type == "turn_end":
+                num_turns += 1
+
+            elif event_type == "agent_end":
+                messages = event.get("messages", [])
+                for msg in reversed(messages):
+                    if msg.get("role") == "assistant":
+                        content = msg.get("content", [])
+                        if content:
+                            completion_text = content[-1].get("text", "")
+                        usage = msg.get("usage", {})
+                        total_tokens = usage.get("totalTokens", 0)
+                        cost_info = usage.get("cost", {})
+                        cost_usd = cost_info.get("total", 0.0)
+                        break
+
+        if not stdout.strip():
+            logger.error(f"Empty Pi output for task {task_id}")
+            return ExecutionResult(
+                success=False,
+                session_id=None,
+                completion_report="Pi produced no output",
+                cost_usd=0.0,
+                num_turns=0,
+                gate_results=[]
+            )
+
+        logger.info(f"Pi completed for task {task_id}: turns={num_turns}, tokens={total_tokens}")
+        return ExecutionResult(
+            success=True,
+            session_id=session_id,
+            completion_report=completion_text or "Task completed",
+            cost_usd=cost_usd,
+            num_turns=num_turns,
+            gate_results=[]
         )
 
     def _handle_infrastructure_failure(

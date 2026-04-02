@@ -47,9 +47,38 @@ class TestAgentConfig:
         config = AgentConfig.from_env()
         assert config.pod_name is None
 
+    def test_harness_defaults_to_claude(self):
+        config = AgentConfig.from_env()
+        assert config.harness == "claude"
+        assert config.pi_provider == "anthropic"
+        assert config.pi_model == "claude-sonnet-4-20250514"
+
+    def test_harness_from_env(self, monkeypatch):
+        monkeypatch.setenv("VF_HARNESS", "pi")
+        monkeypatch.setenv("VF_PI_PROVIDER", "anthropic")
+        monkeypatch.setenv("VF_PI_MODEL", "claude-haiku-3-20240307")
+        config = AgentConfig.from_env()
+        assert config.harness == "pi"
+        assert config.pi_provider == "anthropic"
+        assert config.pi_model == "claude-haiku-3-20240307"
+
     def test_display(self):
         config = AgentConfig(agent_id="test-1", agent_role="executor")
         output = config.display()
         assert "agent_id:" in output
         assert "test-1" in output
         assert "executor" in output
+        assert "harness:" in output
+        assert "claude" in output
+
+    def test_display_pi_shows_provider_and_model(self):
+        config = AgentConfig(agent_id="test-pi", harness="pi", pi_provider="anthropic", pi_model="sonnet")
+        output = config.display()
+        assert "pi_provider:" in output
+        assert "pi_model:" in output
+
+    def test_display_claude_hides_pi_fields(self):
+        config = AgentConfig(agent_id="test-claude", harness="claude")
+        output = config.display()
+        assert "pi_provider:" not in output
+        assert "pi_model:" not in output

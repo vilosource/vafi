@@ -431,6 +431,180 @@ class TestHarnessInvoker:
             assert harness_args[0] == "claude"
             assert "cxtx" not in harness_args
 
+    # --- Pi harness tests ---
+
+    @pytest.mark.asyncio
+    async def test_pi_command_without_cxdb(self, sample_task, sample_repo, temp_workdir):
+        """Test Pi command building without cxtx wrapping."""
+        config = AgentConfig(
+            agent_id="test-pi",
+            task_timeout=30,
+            max_turns=10,
+            sessions_dir="/tmp/test-sessions",
+            harness="pi",
+            pi_provider="anthropic",
+            pi_model="claude-sonnet-4-20250514",
+            agent_role="executor",
+        )
+        invoker = HarnessInvoker(config)
+
+        with patch('controller.invoker.subprocess.run') as mock_git, \
+             patch('controller.invoker.asyncio.create_subprocess_exec') as mock_subprocess:
+
+            mock_git.return_value = Mock(returncode=0, stderr="", stdout="")
+
+            mock_process = Mock()
+            mock_process.returncode = 0
+            pi_output = (
+                '{"type":"session","id":"pi-session-1"}\n'
+                '{"type":"agent_start"}\n'
+                '{"type":"turn_start"}\n'
+                '{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"toolResults":[]}\n'
+                '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"totalTokens":100,"cost":{"total":0.001}}}]}\n'
+            )
+            async def mock_communicate():
+                return (pi_output, "")
+            mock_process.communicate = mock_communicate
+            mock_subprocess.return_value = mock_process
+
+            result = await invoker.invoke(sample_task, sample_repo, temp_workdir, "test prompt")
+
+            harness_args = mock_subprocess.call_args[0]
+            assert harness_args[0] == "pi"
+            assert "-p" in harness_args
+            assert "--provider" in harness_args
+            assert "anthropic" in harness_args
+            assert "--model" in harness_args
+            assert "--mode" in harness_args
+            assert "json" in harness_args
+            assert "--no-session" in harness_args
+            assert "--append-system-prompt" in harness_args
+            assert "cxtx" not in harness_args
+
+            assert result.success is True
+            assert result.session_id == "pi-session-1"
+            assert result.completion_report == "done"
+            assert result.num_turns == 1
+
+    @pytest.mark.asyncio
+    async def test_pi_command_with_cxdb(self, sample_task, sample_repo, temp_workdir):
+        """Test Pi command building with cxtx wrapping."""
+        config = AgentConfig(
+            agent_id="test-pi-cxtx",
+            task_timeout=30,
+            max_turns=10,
+            sessions_dir="/tmp/test-sessions",
+            harness="pi",
+            pi_provider="anthropic",
+            pi_model="claude-sonnet-4-20250514",
+            cxdb_url="http://cxdb:9010",
+        )
+        invoker = HarnessInvoker(config)
+
+        with patch('controller.invoker.subprocess.run') as mock_git, \
+             patch('controller.invoker.asyncio.create_subprocess_exec') as mock_subprocess:
+
+            mock_git.return_value = Mock(returncode=0, stderr="", stdout="")
+            mock_process = Mock()
+            mock_process.returncode = 0
+            async def mock_communicate():
+                return ('{"type":"session","id":"s1"}\n{"type":"agent_end","messages":[]}\n', "")
+            mock_process.communicate = mock_communicate
+            mock_subprocess.return_value = mock_process
+
+            await invoker.invoke(sample_task, sample_repo, temp_workdir, "test prompt")
+
+            harness_args = mock_subprocess.call_args[0]
+            assert harness_args[0] == "cxtx"
+            assert harness_args[1] == "--url"
+            assert harness_args[2] == "http://cxdb:9010"
+            assert harness_args[3] == "--label"
+            assert harness_args[4] == "task:test-task-123"
+            assert harness_args[5] == "pi"
+            assert harness_args[6] == "--"
+            assert "-p" in harness_args
+
+    def test_parse_pi_output_success(self, test_config):
+        """Test Pi JSONL output parsing with full agent_end event."""
+        config = AgentConfig(**{**test_config.__dict__, "harness": "pi"})
+        invoker = HarnessInvoker(config)
+
+        pi_output = "\n".join([
+            '{"type":"session","version":3,"id":"sess-abc"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"turn_end","message":{"role":"assistant"},"toolResults":[]}',
+            '{"type":"turn_start"}',
+            '{"type":"turn_end","message":{"role":"assistant"},"toolResults":[]}',
+            '{"type":"agent_end","messages":[{"role":"user","content":[{"type":"text","text":"do it"}]},{"role":"assistant","content":[{"type":"text","text":"All done"}],"usage":{"totalTokens":500,"cost":{"total":0.005}}}]}',
+        ])
+        result = invoker._parse_pi_output(pi_output, "task-1")
+        assert result.success is True
+        assert result.session_id == "sess-abc"
+        assert result.completion_report == "All done"
+        assert result.num_turns == 2
+        assert result.cost_usd == 0.005
+
+    def test_parse_pi_output_empty(self, test_config):
+        """Test Pi output parsing with empty stdout."""
+        config = AgentConfig(**{**test_config.__dict__, "harness": "pi"})
+        invoker = HarnessInvoker(config)
+        result = invoker._parse_pi_output("", "task-2")
+        assert result.success is False
+        assert "no output" in result.completion_report.lower()
+
+    def test_parse_pi_output_malformed_lines(self, test_config):
+        """Test Pi output parsing with mix of valid and invalid JSONL."""
+        config = AgentConfig(**{**test_config.__dict__, "harness": "pi"})
+        invoker = HarnessInvoker(config)
+
+        pi_output = "\n".join([
+            '{"type":"session","id":"sess-ok"}',
+            'not valid json',
+            '{"type":"turn_end","message":{}}',
+            '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"recovered"}],"usage":{"totalTokens":50,"cost":{"total":0}}}]}',
+        ])
+        result = invoker._parse_pi_output(pi_output, "task-3")
+        assert result.success is True
+        assert result.session_id == "sess-ok"
+        assert result.completion_report == "recovered"
+        assert result.num_turns == 1
+
+    def test_parse_pi_output_no_agent_end(self, test_config):
+        """Test Pi output parsing when stream is cut short (no agent_end)."""
+        config = AgentConfig(**{**test_config.__dict__, "harness": "pi"})
+        invoker = HarnessInvoker(config)
+
+        pi_output = "\n".join([
+            '{"type":"session","id":"sess-cut"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+        ])
+        result = invoker._parse_pi_output(pi_output, "task-4")
+        assert result.success is True
+        assert result.session_id == "sess-cut"
+        assert result.completion_report == "Task completed"
+        assert result.num_turns == 0
+
+    def test_parse_pi_output_with_tool_use(self, test_config):
+        """Test Pi output parsing with tool execution events."""
+        config = AgentConfig(**{**test_config.__dict__, "harness": "pi"})
+        invoker = HarnessInvoker(config)
+
+        pi_output = "\n".join([
+            '{"type":"session","id":"sess-tools"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash"}',
+            '{"type":"tool_execution_end","toolCallId":"c1","isError":false}',
+            '{"type":"turn_end","message":{"role":"assistant"},"toolResults":[{"callId":"c1"}]}',
+            '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ran tests"}],"usage":{"totalTokens":200,"cost":{"total":0}}}]}',
+        ])
+        result = invoker._parse_pi_output(pi_output, "task-5")
+        assert result.success is True
+        assert result.completion_report == "ran tests"
+        assert result.num_turns == 1
+
     @pytest.mark.asyncio
     async def test_cxtx_with_max_turns(self, sample_task, sample_repo, temp_workdir):
         """Test that max_turns appears after -- in cxtx-wrapped command."""

@@ -26,6 +26,10 @@ class AgentConfig:
 
     sessions_dir: str = "/sessions"
 
+    harness: str = "claude"
+    pi_provider: str = "anthropic"
+    pi_model: str = "claude-sonnet-4-20250514"
+
     cxdb_url: str = ""
     cxdb_public_url: str = ""
 
@@ -48,6 +52,9 @@ class AgentConfig:
             max_turns=int(os.environ.get("VF_MAX_TURNS", "50")),
             heartbeat_interval=int(os.environ.get("VF_HEARTBEAT_INTERVAL", "300")),
             sessions_dir=os.environ.get("VF_SESSIONS_DIR", "/sessions"),
+            harness=os.environ.get("VF_HARNESS", "claude"),
+            pi_provider=os.environ.get("VF_PI_PROVIDER", "anthropic"),
+            pi_model=os.environ.get("VF_PI_MODEL", "claude-sonnet-4-20250514"),
             cxdb_url=os.environ.get("VF_CXDB_URL", ""),
             cxdb_public_url=os.environ.get("VF_CXDB_PUBLIC_URL", ""),
             pod_name=os.environ.get("POD_NAME"),
@@ -67,7 +74,11 @@ class AgentConfig:
             f"  max_turns:          {self.max_turns}",
             f"  heartbeat_interval: {self.heartbeat_interval}s",
             f"  sessions_dir:       {self.sessions_dir}",
+            f"  harness:            {self.harness}",
             f"  cxdb_url:          {self.cxdb_url or '(disabled)'}",
             f"  cxdb_public_url:   {self.cxdb_public_url or '(same as cxdb_url)'}",
         ]
+        if self.harness == "pi":
+            lines.insert(-2, f"  pi_provider:        {self.pi_provider}")
+            lines.insert(-2, f"  pi_model:           {self.pi_model}")
         return "\n".join(lines)
