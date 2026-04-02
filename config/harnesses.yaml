@@ -22,3 +22,10 @@ harnesses:
           anthropic-auth-token: ANTHROPIC_API_KEY
           anthropic-base-url: ANTHROPIC_BASE_URL
           vtf-token: VF_VTF_TOKEN
+
+  bash-agent:
+    image: harbor.viloforge.com/vafi/vafi-bash-agent:latest
+    description: Bash-only test harness (no AI CLI)
+    output_format: raw_text
+    supports_rpc: false
+    secrets: []

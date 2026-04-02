@@ -1,7 +1,7 @@
 roles:
   architect:
     description: Interactive planning and design sessions
-    allowed_harnesses: [pi, claude]
+    allowed_harnesses: [pi, claude, bash-agent]
     default_harness: pi
     env:
       VF_AGENT_ROLE: architect
