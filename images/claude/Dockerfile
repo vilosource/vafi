@@ -19,6 +19,10 @@ RUN npm install -g @anthropic-ai/claude-code
 COPY --from=cxtx-builder /build/cxdb/target/release/cxtx /usr/local/bin/cxtx
 RUN chmod +x /usr/local/bin/cxtx
 
+## Harness boundary scripts
+COPY init.sh connect.sh run.sh /opt/vf-harness/
+RUN chmod +x /opt/vf-harness/init.sh /opt/vf-harness/connect.sh /opt/vf-harness/run.sh
+
 USER agent
 
 # Verify both tools are available

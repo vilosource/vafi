@@ -29,6 +29,10 @@ RUN mkdir -p /home/agent/.pi/agent && \
     cp /root/.pi/agent/settings.json /home/agent/.pi/agent/settings.json && \
     chown -R agent:agent /home/agent/.pi/agent
 
+## Harness boundary scripts
+COPY init.sh connect.sh run.sh /opt/vf-harness/
+RUN chmod +x /opt/vf-harness/init.sh /opt/vf-harness/connect.sh /opt/vf-harness/run.sh
+
 USER agent
 
 # Verify
