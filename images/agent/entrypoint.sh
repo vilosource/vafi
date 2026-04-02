@@ -88,6 +88,8 @@ if [ "$AGENT_ROLE" = "architect" ]; then
         WORKDIR="${SESSIONS_DIR}/greenfield"
     fi
 
+    # Harness-specific architect config
+    if [ "$HARNESS" != "pi" ]; then
     # Patch ~/.claude.json: skip onboarding + configure vtf MCP
     export WORKDIR
     python3 -c "
@@ -146,6 +148,7 @@ with open(cfg_path, 'w') as f:
 }
 SETTINGS
     echo "Wrote ~/.claude/settings.json"
+    fi  # end HARNESS != pi
 
     # Clone project repo if URL provided, otherwise create empty workdir
     if [ -n "$REPO_URL" ]; then
@@ -162,8 +165,8 @@ SETTINGS
 
     cd "$WORKDIR"
 
-    # Write project CLAUDE.md so the architect has context about this session
-    if [ ! -f CLAUDE.md ]; then
+    # Write project CLAUDE.md so the architect has context about this session (Claude only)
+    if [ "$HARNESS" != "pi" ] && [ ! -f CLAUDE.md ]; then
         VTF_API="${VTF_API_URL:-}"
         WORKPLAN_ID="${VTF_WORKPLAN_ID:-}"
         cat > CLAUDE.md <<CLAUDEMD
