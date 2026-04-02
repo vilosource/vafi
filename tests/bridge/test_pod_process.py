@@ -46,12 +46,13 @@ class TestPodProcessManager:
         assert cmd == ["/opt/vf-harness/connect.sh"]
 
     def test_exec_command_rpc_mode(self):
-        """RPC mode uses pi --mode rpc for locked sessions."""
+        """RPC mode sources init.sh then starts pi --mode rpc."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
         cmd = mgr.build_exec_command(rpc=True)
-        assert cmd[0] == "pi"
-        assert "--mode" in cmd
-        assert "rpc" in cmd
+        assert cmd[0] == "bash"
+        script = cmd[2]
+        assert "init.sh" in script
+        assert "--mode rpc" in script
 
 
 class TestPodSession:
