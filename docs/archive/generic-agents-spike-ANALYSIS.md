@@ -1,3 +1,5 @@
+> **Archived**: This document is historical. For current architecture, see [ARCHITECTURE-SUMMARY.md](../ARCHITECTURE-SUMMARY.md) and [harness-images-ARCHITECTURE.md](../harness-images-ARCHITECTURE.md).
+
 # Generic Agent Spike — Rumsfeld Matrix
 
 Status: Active (2026-03-28)

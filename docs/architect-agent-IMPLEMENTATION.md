@@ -165,25 +165,34 @@ The pod has no k8s API access (no service account token mounted). It communicate
 
 ## MCP Configuration
 
-The entrypoint patches `~/.claude.json` with the MCP server config:
+The entrypoint patches `~/.claude.json` with the MCP server config (Claude architect only):
 
 ```json
 {
   "mcpServers": {
     "vtf": {
       "type": "http",
-      "url": "http://vtf-mcp.vtf-dev.svc.cluster.local:8002/mcp",
+      "url": "${VF_VTF_MCP_URL}",
       "headers": {
-        "Authorization": "Token {VF_VTF_TOKEN}"
+        "Authorization": "Token ${VF_VTF_TOKEN}",
+        "X-VTF-Project": "${VTF_PROJECT_SLUG}"
       }
+    },
+    "cxdb": {
+      "type": "http",
+      "url": "${VF_CXDB_MCP_URL}"
     }
   }
 }
 ```
 
+The `cxdb` server is only added when `VF_CXDB_MCP_URL` is set. The `vtf` server is only added when both `VF_VTF_MCP_URL` and `VF_VTF_TOKEN` are set.
+
 **Critical**: the `"type": "http"` field is mandatory. Without it, Claude Code silently fails to connect to the MCP server.
 
-The MCP server runs as a separate k8s service (`vtf-mcp`) in the vtf namespace, not as a path on the API. Token authentication is required.
+For **Pi architect** mode, the equivalent config is written to `~/.pi/agent/mcp.json` using the `url` field (Pi uses pi-mcp-adapter for MCP support).
+
+The MCP URLs are injected via env vars, not hardcoded. Token authentication is required for vtf; cxdb has no auth.
 
 ### Available MCP Tools
 
@@ -282,6 +291,7 @@ Claude Code has a first-run experience (theme selection, trust dialog). In a pod
 {
   "hasCompletedOnboarding": true,
   "theme": "dark",
+  "autoUpdates": false,
   "projects": {
     "/sessions/{project}": {
       "hasTrustDialogAccepted": true,

@@ -1,41 +1,84 @@
 # vafi Architecture Summary
 
-Compact reference for executor and judge agents. Read this instead of the full design docs.
+Compact reference for the vafi agent fleet. Read this instead of the archived design docs.
+
+Last updated: 2026-04-02
 
 ## What vafi is
 
-A GitLab Runner-like system for AI agents. Agents run in k8s pods, poll vtf for tasks, execute them, run verification gates, and report results autonomously.
+A GitLab Runner-like system for AI agents. Agents run in k8s pods, poll vtf for tasks, execute them using AI harnesses (Claude Code or Pi), run verification gates, capture traces, and report results autonomously.
 
 ## System components
 
 ```
-vtf API (task board)  <-->  vafi controller (in pod)  -->  claude code (harness)
-       ^                         |
-       |                         v
-  Web UI / CLI            git clone + test suite
+vtf API (task board)  <-->  vafi controller (in pod)  -->  harness (claude or pi)
+       ^                         |                              |
+       |                         v                         cxtx (trace proxy)
+  Web UI / CLI            git clone + test suite                |
+                                                           cxdb (traces + summaries)
 ```
 
 - **vtf**: Task coordination API. Owns task state, specs, reviews, projects.
-- **vafi controller**: Python asyncio loop inside a k8s pod. Polls vtf, claims tasks, invokes claude code, runs gates, reports results.
-- **Claude Code**: The harness that executes task specs. Runs as a subprocess inside the agent pod.
+- **vafi controller**: Python asyncio loop inside a k8s pod. Polls vtf, claims tasks, invokes harness, runs gates, reports results. Harness-agnostic.
+- **Harness**: The AI CLI that executes task specs. Runs as a subprocess. Currently Claude Code or Pi coding agent, selected by `VF_HARNESS` env var.
+- **cxtx**: Trace capture proxy. Wraps harness invocation to intercept API calls and push to cxdb.
+- **cxdb**: Execution trace store. Captures full conversation DAGs. Provides post-mortem analysis, session summaries, and MCP tools for the architect agent.
+- **vafi-console**: Web-based terminal for interactive architect sessions (xterm.js + WebSocket proxy to k8s exec).
+
+## Agent roles
+
+| Role | Mode | Purpose |
+|------|------|---------|
+| **Executor** | Autonomous | Claims tasks, writes code, runs gates |
+| **Judge** | Autonomous | Reviews executor work, approves or requests changes |
+| **Architect** | Interactive | Planning sessions with a human, creates vtf tasks via MCP |
+
+All three roles use the same image hierarchy and controller code. Role is selected by `VF_AGENT_ROLE` env var.
 
 ## Controller loop
 
 ```
-register() -> loop { poll() -> claim() -> clone repo -> invoke harness -> run gates -> complete/fail() }
+register() -> loop { poll() -> claim() -> clone repo -> build context -> invoke harness -> run gates -> summarize -> complete/fail() }
 ```
 
 1. Register agent with vtf (idempotent upsert)
 2. Poll for work (rework first, then new tasks)
-3. Claim task (30min timeout, heartbeat extends)
-4. Clone project repo
-5. Build prompt from task spec
-6. Invoke Claude Code with prompt
-7. Run verification gates (test suite)
-8. Report result: complete (gates passed) or fail (gates failed)
-9. If task needs review: vtf moves to pending_completion_review
-10. Judge reviews, approves or requests changes
-11. On changes_requested: controller picks up rework on next poll
+3. Claim task (heartbeat extends claim timeout)
+4. Clone project repo (SSH via github-ssh secret)
+5. Build context file (`.vafi/context.md` — task state, judge feedback, rework history)
+6. Invoke harness with task prompt (wrapped in cxtx for trace capture)
+7. Run verification gates (test suite exit code = source of truth)
+8. Post-execution (best-effort, background): look up trace URL in cxdb and post to vtf notes; if summarizer configured, generate NL summary via Haiku
+9. Report result: complete (gates passed) or fail (gates failed)
+10. On changes_requested: controller picks up rework on next poll (max 3 attempts)
+
+## Multi-harness support
+
+Two harnesses are supported. See [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md) for full details.
+
+| Aspect | Claude Code | Pi |
+|--------|------------|-----|
+| Image | `vafi-agent` | `vafi-agent-pi` |
+| CLI | `claude -p ... --output-format json` | `pi -p ... --mode json` |
+| Permission handling | `--dangerously-skip-permissions` | Headless-safe by default |
+| Methodology delivery | Auto-discovered from `~/.claude/CLAUDE.md` | `--append-system-prompt` flag |
+| Output format | Single JSON object | Streaming JSONL |
+| MCP config | `~/.claude.json` mcpServers | `~/.pi/agent/mcp.json` via pi-mcp-adapter |
+| cxtx support | `cxtx claude` | `cxtx pi` |
+
+Both harnesses use the same controller, gates, WorkSource protocol, and reporting.
+
+## Observability (cxdb)
+
+Every task execution is traced:
+
+1. **cxtx** wraps the harness subprocess, intercepting all LLM API calls
+2. Traces are pushed to **cxdb** (immutable conversation DAG)
+3. After execution, the **summarizer** extracts structured data (files changed, tools used, tests run, commits made)
+4. **NL summary** generated via Haiku (one-liner, what happened, key decisions, failure analysis)
+5. Trace URL and summary posted to vtf task notes and `execution_summary` field
+
+The **cxdb-mcp** service exposes 4 tools for the architect agent: `cxdb_session_summary`, `cxdb_session_breadcrumbs`, `cxdb_get_turns`, `cxdb_list_sessions`.
 
 ## Key types
 
@@ -56,13 +99,18 @@ The controller depends on `WorkSource`, not vtf directly. Methods:
 |--------|---------|
 | `register(name, tags)` | Register agent, get ID + token |
 | `poll(agent_id, tags)` | Get next task (rework priority) |
+| `poll_reviews(agent_id)` | Get tasks in changes_requested state |
 | `claim(task_id, agent_id)` | Claim task for execution |
 | `heartbeat(task_id)` | Extend claim timeout |
+| `agent_heartbeat(agent_id)` | Update agent last_heartbeat |
+| `set_agent_offline(agent_id)` | Mark agent offline on shutdown |
 | `complete(task_id, result)` | Report success with results |
 | `fail(task_id, reason)` | Report failure |
 | `get_repo_info(project_id)` | Get clone URL + branch |
 | `get_rework_context(task_id)` | Get judge feedback for rework |
 | `count_rework_attempts(task_id)` | Check retry count (max 3) |
+| `get_task_context(task_id)` | Get task with reviews for context file |
+| `add_note(task_id, content)` | Post note to task (trace URLs, metadata) |
 | `submit(task_id)` | draft -> todo (supervisor) |
 | `list_submittable()` | Tasks with all deps done |
 | `submit_review(task_id, decision, reason, reviewer_id)` | Judge verdict |
@@ -78,50 +126,49 @@ draft -> todo -> doing -> [pending_completion_review -> done | changes_requested
 
 - **k8s cluster**: k3s on fuji (192.168.2.91)
 - **Registry**: harbor.viloforge.com (Harbor, in-cluster)
-- **Images**: vafi-base → vafi-claude → vafi-agent (three-layer chain)
+- **Images**: See [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md)
+  - `vafi-base` -> `vafi-claude` -> `vafi-agent` (Claude harness)
+  - `vafi-base` -> `vafi-pi` -> `vafi-agent-pi` (Pi harness)
+  - Agent Dockerfile is parameterized via `HARNESS_IMAGE` build arg
 - **Namespaces**:
-  - `vtf-prod` — vtf production (vtf.viloforge.com), the orchestrator
-  - `vtf-dev` — vtf development (vtf.dev.viloforge.com), target for vtf changes
-  - `vafi-agents` — executor/judge pods, one pool connected to vtf-prod
-  - `vafi-prod` — vafi control plane (future)
-- **vtf access from pods**: vtf-api.vtf-prod.svc.cluster.local:8000
-- **vtf access from dev laptop**: https://vtf.viloforge.com
+  - `vtf-prod` — vtf production (vtf.viloforge.com)
+  - `vtf-dev` — vtf development (vtf.dev.viloforge.com)
+  - `vafi-dev` — development executor/judge pools, connected to vtf-dev
+  - `vafi-prod` — production executor/judge pools, connected to vtf-prod
+- **Services** (Helm-managed, names are `<release>-<component>`):
+  - `<release>-cxdb` — cxdb trace store (StatefulSet, port 80)
+  - `cxdb-mcp` — MCP server for cxdb tools (port 8090, deployed separately from Helm chart)
+  - `vafi-console` — web terminal for architect sessions (deployed separately from Helm chart)
+- **vtf access from pods**: configured via `VF_VTF_API_URL` env var (code default: `vtf-api.vafi-system.svc.cluster.local:8000`; in practice set to `vtf-api.vtf-dev.svc.cluster.local:8000` or `vtf-api.vtf-prod.svc.cluster.local:8000` by Helm)
+- **Auth**: Anthropic API key via k8s Secret (Helm-templated name, e.g. `vafi-secrets`), SSH via `github-ssh` secret
 
-## Executor deployment model
+## Deployment model
 
-One pool, one orchestrator. Like GitLab runners — there's one set of runners connected to one server.
+Pools per environment, each connected to its vtf instance:
 
 ```
-executor-pool (vafi-agents)  --->  vtf-prod (orchestrator)
-                                       |
-                                  tasks reference
-                                       |
-                                  project repos (GitHub)
+vafi-dev executor pool   --->  vtf-dev (development)
+vafi-dev executor-pi pool
+vafi-prod executor pool  --->  vtf-prod (production)
 ```
 
-### Steady state
+Managed via Helm chart (`charts/vafi/`). Dev pools used for testing controller changes. Prod pools run stable code.
 
-The `executor-pool` deployment in `vafi-agents` connects to **vtf-prod**. It polls for tasks, claims them, executes, reports back. This is the only permanent pool.
+## Test suite
 
-### Developing the executor
+193 tests covering controller, invoker (Claude + Pi), config, WorkSource, gates, judge, heartbeat, vtf client, cxdb (client, parser, extractor, summarizer, NL summary, dispatch, workplan context), and cxdb-mcp formatters.
 
-When changing controller code, images, or configuration:
-
-1. `make build && make push` — build and push new images to harbor
-2. `make smoke-test` — spins up an **ephemeral pod** connected to **vtf-dev**, submits a test task, watches execution, cleans up
-3. If smoke test passes, promote: `make deploy --restart` to roll the new image into the stable pool
-
-The smoke test never touches vtf-prod. The stable pool is never disrupted during development.
-
-### Why not two pools?
-
-vtf-dev is a **target application** (where agents deploy vtf changes), not a dev orchestrator. The dev/prod split is in the vtf instance, not the executor pool. Having two permanent pools would conflate "which vtf instance to talk to" with "which executor code to run."
+```bash
+cd ~/GitHub/vafi && python -m pytest tests/ -v
+```
 
 ## Key decisions
 
 1. **k8s, not Docker Compose** — pods provide isolation, resource limits, scheduling
 2. **Controller inside pod** — self-managing, no host-side orchestration
 3. **WorkSource protocol** — controller is vtf-agnostic, swappable work sources
-4. **Spec-driven execution** — task YAML carries everything the agent needs
-5. **Gates as source of truth** — test suite exit code determines pass/fail, not agent self-report
-6. **Supervisor is separate** — dispatches work to vtf board, doesn't run in pods
+4. **Multi-harness** — Claude Code and Pi supported via `VF_HARNESS` env var. Controller is harness-agnostic.
+5. **Spec-driven execution** — task specs carry everything the agent needs
+6. **Gates as source of truth** — test suite exit code determines pass/fail, never parse LLM output
+7. **cxtx for traces** — every execution captured in cxdb, NL summaries generated automatically
+8. **Supervisor is separate** — dispatches work to vtf board, doesn't run in pods

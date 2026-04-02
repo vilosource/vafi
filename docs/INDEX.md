@@ -1,36 +1,51 @@
-# vafi Documentation Index
+# vafi Documentation
 
-## Design
-
-| Document | Description | Status |
-|----------|-------------|--------|
-| [vafi-DESIGN.md](vafi-DESIGN.md) | Main architecture document — problem statement, four-layer architecture, GitLab Runner prior art, agent config, instruction delivery, prompt construction, output parsing, image strategy, K8s topology, gate execution | Draft |
-| [controller-DESIGN.md](controller-DESIGN.md) | Controller design decisions D1-D8 — Python asyncio, session resumption, state machine changes, poll targets, rework limits, dynamic workdirs, cleanup, controller/orchestrator separation. Also documents the current simulation architecture and what works/doesn't. | Draft |
-
-## Contracts
-
-| Document | Description | Status |
-|----------|-------------|--------|
-| [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md) | API contract between vtf and vafi — 14 interaction points with request/response examples, 5 vtf gaps (GAP-1 through GAP-5), vafi-side interface design (WorkSource protocol, VtfClient, VtfWorkSource), shared data types | Draft |
-
-## Planning
-
-| Document | Description | Status |
-|----------|-------------|--------|
-| [vafi-project-PLAN.md](vafi-project-PLAN.md) | Project plan — milestones M0-M4, dependencies, vtf GAP work (parallel stream), open decisions (K8s cluster type, registry, first target project) | Draft |
+Last updated: 2026-04-02
 
 ## How to read these docs
 
-1. Start with **controller-DESIGN.md** for the problem statement and what the simulation proved
-2. Read **vafi-DESIGN.md** for the full architecture (four layers, K8s, agent config, gates, output parsing)
-3. Reference **vtf-vafi-interface-CONTRACT.md** when implementing either side of the vtf/vafi boundary
+**Start here:** [ARCHITECTURE-SUMMARY.md](ARCHITECTURE-SUMMARY.md) — everything you need to understand vafi in one page.
 
-## Key decisions captured
+**Then, based on what you're doing:**
 
-- K8s is the deployment target (not Docker Compose)
-- vafi is a fresh project, independent of vf-agents
-- Controller is Python asyncio, inside the pod
-- One image, role selected by `VF_AGENT_ROLE` env var
-- Gates (test commands) are source of truth, never parse LLM output
-- WorkSource protocol decouples controller from vtf
-- Spikes 1 and 2 resolved — session files don't survive pod restarts (fallback is normal path), auth resolves from `$HOME` independent of cwd
+- Building or modifying harness images? Read [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md)
+- Working on the vtf/vafi boundary? Read [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md)
+- Adding context passing to the controller? Read [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md)
+- Working on the architect agent or vafi-console? Read [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md)
+- Designing the agent bridge service? Read [agent-bridge-service-DESIGN.md](agent-bridge-service-DESIGN.md)
+
+## Active Documents
+
+These are authoritative and kept up-to-date.
+
+| Document | Purpose |
+|----------|---------|
+| [ARCHITECTURE-SUMMARY.md](ARCHITECTURE-SUMMARY.md) | System overview — components, controller loop, multi-harness, cxdb, infrastructure, key decisions |
+| [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md) | Multi-harness image architecture — Claude vs Pi, Dockerfiles, config files, CLI invocation, output parsing, how to add a new harness |
+| [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md) | API contract between vtf and vafi — 14 interaction points, WorkSource protocol, gap analysis (GAP-1/GAP-4 resolved) |
+| [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md) | Context file design — `.vafi/context.md` materialized before each harness invocation |
+| [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md) | Architect agent — pod lifecycle, vafi-console integration, WebSocket proxy, MCP tools |
+| [agent-bridge-service-DESIGN.md](agent-bridge-service-DESIGN.md) | Agent bridge service — API design, Pi RPC process manager, channel adapters (Slack, web, mobile). Future work. |
+
+## Archived Documents
+
+Historical docs preserved for context. These were accurate when written but have been superseded by the active docs above. Each has an archive banner linking to the current authoritative source.
+
+| Document | What it was | Why archived |
+|----------|------------|-------------|
+| [vafi-DESIGN.md](archive/vafi-DESIGN.md) | Original architecture (1,345 lines) | Superseded by ARCHITECTURE-SUMMARY + harness doc. Missing Pi, cxdb, Helm. |
+| [controller-DESIGN.md](archive/controller-DESIGN.md) | Controller decisions D1-D8 | Absorbed into summary. Spikes and GAPs shown as open but resolved. |
+| [vafi-project-PLAN.md](archive/vafi-project-PLAN.md) | Milestone plan M0-M4 | M0-M2 complete. Pi listed as out-of-scope (now done). Old server IPs. |
+| [architect-agent-DESIGN.md](archive/architect-agent-DESIGN.md) | Architect design proposal | Superseded by implementation doc. No Pi support, cxdb tagged future. |
+| [cxdb-vtf-integration-DESIGN.md](archive/cxdb-vtf-integration-DESIGN.md) | cxdb integration proposal | vafi-side fully implemented. Stale namespace references. |
+| [helm-migration-PLAN.md](archive/helm-migration-PLAN.md) | Kustomize to Helm migration | Migration completed. |
+| [m2-simulation-ANALYSIS.md](archive/m2-simulation-ANALYSIS.md) | M2 post-mortem (8 tasks, 94 tests) | Historical snapshot. Current state: 193 tests. |
+| [k8s-harness-spikes-ANALYSIS.md](archive/k8s-harness-spikes-ANALYSIS.md) | K8s spike results (auth, clone, exec) | Findings absorbed into decisions. Stale namespace refs. |
+| [generic-agents-spike-ANALYSIS.md](archive/generic-agents-spike-ANALYSIS.md) | Generic agent spike (Rumsfeld matrix) | Spike complete, findings applied. |
+| [dev-server-setup-ANALYSIS.md](archive/dev-server-setup-ANALYSIS.md) | Fuji server provisioning analysis | Setup completed. |
+
+## External
+
+| Document | Where it belongs |
+|----------|-----------------|
+| [viloforge-cloudflare-repo-SPECIFICATION.md](viloforge-cloudflare-repo-SPECIFICATION.md) | Should be in the `viloforge-cloudflare` repo. Kept here until migrated. |

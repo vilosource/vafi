@@ -40,7 +40,7 @@ Before each harness invocation, the controller writes `.vafi/context.md` into th
 
 ## History
 
-### Attempt 1 — executor-default (2026-03-28T15:22:43Z)
+### Note 1 — executor-default (2026-03-28T15:22:43Z)
 Completion report:
 > Implemented divide function with 4 tests. All acceptance criteria met.
 
@@ -107,7 +107,7 @@ The controller materializes vtf state into the workdir. Agents communicate throu
 
 For each invocation, the controller:
 
-1. Fetches the task from vtf with `expand=reviews,events`
+1. Fetches the task from vtf with `expand=reviews`
 2. Fetches task notes from vtf
 3. Constructs the context markdown from this data
 4. Writes it to `<workdir>/.vafi/context.md`
@@ -167,10 +167,10 @@ One task = one repo = one workdir. The task system handles coordination.
 
 ## Implementation
 
-### Changes needed
+### Implementation (done)
 
-1. **New module: `src/controller/context.py`**
-   - `build_context(task_data, notes, reviews) -> str` — pure function, vtf data → markdown
+1. **Module: `src/controller/context.py`**
+   - `build_context(task_data, notes, reviews, role="executor", prior_summaries=None, workplan_context="") -> str` — pure function, vtf data → markdown
    - `write_context(workdir, content)` — writes to `.vafi/context.md`
 
 2. **Controller: `execute()` method**

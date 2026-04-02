@@ -1,3 +1,5 @@
+> **Archived**: This document is historical. For current architecture, see [ARCHITECTURE-SUMMARY.md](../ARCHITECTURE-SUMMARY.md) and [harness-images-ARCHITECTURE.md](../harness-images-ARCHITECTURE.md).
+
 # Dev Server Setup Analysis — fuji (192.168.2.91)
 
 ## Context

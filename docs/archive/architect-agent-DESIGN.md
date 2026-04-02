@@ -1,3 +1,5 @@
+> **Archived**: This document is historical. For current architecture, see [ARCHITECTURE-SUMMARY.md](../ARCHITECTURE-SUMMARY.md) and [harness-images-ARCHITECTURE.md](../harness-images-ARCHITECTURE.md).
+
 # Architect Agent Design
 
 > The third vafi agent role — translates human intent into formal requirements and vtf draft tasks.

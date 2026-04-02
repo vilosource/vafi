@@ -1,3 +1,5 @@
+> **Archived**: This document is historical. For current architecture, see [ARCHITECTURE-SUMMARY.md](../ARCHITECTURE-SUMMARY.md) and [harness-images-ARCHITECTURE.md](../harness-images-ARCHITECTURE.md).
+
 # K8s Harness Spikes — Analysis
 
 Reference document for anyone working on the vafi controller or deploying agents to Kubernetes. Covers all spike findings from the k8s harness validation session.

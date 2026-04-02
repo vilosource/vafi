@@ -1,7 +1,7 @@
 # vtf ↔ vafi Interface Contract
 
-Status: Draft (2026-03-22)
-Extracted from: vafi-DESIGN.md
+Status: Updated 2026-04-02
+Originally extracted from: vafi-DESIGN.md (now archived)
 
 This is the API contract between vtf and vafi. vafi can be developed
 in isolation against this contract. Changes needed in vtf are identified
@@ -40,9 +40,9 @@ behavior — create if new, update tags/status if exists.
 
 ### 2. Poll for Work (controller loop)
 
-**Priority 1 — Rework assigned to me:**
+**Priority 1 — Rework tasks (any agent can pick up):**
 ```
-GET /v1/tasks/?status=changes_requested&assigned_to={agent_id}&expand=reviews
+GET /v1/tasks/?status=changes_requested&expand=reviews
 → 200 OK
 {
   "results": [
@@ -324,18 +324,18 @@ Summary of all gaps identified in the interface contract.
 
 | # | Change | Severity | Description |
 |---|--------|----------|-------------|
-| GAP-1 | Agent registration upsert | **Blocks restart** | POST /v1/agents/ should upsert by name — create if new, update if exists. Currently creates duplicates. |
-| GAP-2 | Task response project expansion | **Performance** | Add `?expand=project` support on task endpoints, or include `repo_url` and `default_branch` in claimable response. Saves one API call per task claim. |
-| GAP-3 | Task metadata field | **Blocks session resume** | Add `metadata` JSON field on task model for structured execution data (session_id, cost, turns, completion report). Using notes for structured data is fragile. |
-| GAP-4 | State machine: changes_requested → doing | **Blocks rework** | Add `doing` to valid transitions from `changes_requested`. One-line change in `state_machine.py`. The claim endpoint should handle this transition. |
-| GAP-5 | Submittable tasks endpoint | **Supervisor efficiency** | Add endpoint or query param to find draft tasks with all dependencies met (analogous to `claimable` for todo tasks). Without this, supervisor must check deps client-side. |
+| GAP-1 | Agent registration upsert | ~~Blocks restart~~ **RESOLVED** | POST /v1/agents/ now upserts by name. |
+| GAP-2 | Task response project expansion | **Performance** | Add `?expand=project` support on task endpoints. Controller works around with extra GET call. |
+| GAP-3 | Task metadata field | ~~Blocks session resume~~ **Workaround** | Structured data stored in vtf task notes (`vafi:session_id=`, `vafi:execution_metadata`). Not a dedicated field, but functional. |
+| GAP-4 | State machine: changes_requested → doing | ~~Blocks rework~~ **RESOLVED** | Claim endpoint handles this transition. |
+| GAP-5 | Submittable tasks endpoint | **Supervisor efficiency** | Supervisor checks deps client-side. Low priority. |
 
 **Priority order for implementation:**
-1. GAP-4 (state machine) — one-line change, blocks the entire rework cycle
-2. GAP-1 (agent upsert) — blocks controller restarts
-3. GAP-3 (metadata field) — blocks session resumption for rework
-4. GAP-2 (project expansion) — optimization, can work around with extra call
-5. GAP-5 (submittable endpoint) — optimization, supervisor can check client-side
+1. ~~GAP-4 (state machine)~~ — **RESOLVED**
+2. ~~GAP-1 (agent upsert)~~ — **RESOLVED**
+3. ~~GAP-3 (metadata field)~~ — **Workaround** (vtf notes)
+4. GAP-2 (project expansion) — optimization, low priority
+5. GAP-5 (submittable endpoint) — optimization, low priority
 
 ---
 
@@ -448,12 +448,22 @@ class WorkSource(Protocol):
 
     # Polling — returns highest priority available task, or None
     async def poll(self, agent_id: str, tags: list[str]) -> TaskInfo | None
+    async def poll_reviews(self, agent_id: str) -> list[TaskInfo]
 
     # Task lifecycle
     async def claim(self, task_id: str, agent_id: str) -> TaskInfo
     async def heartbeat(self, task_id: str) -> None
+    async def agent_heartbeat(self, agent_id: str) -> None
+    async def set_agent_offline(self, agent_id: str) -> None
     async def complete(self, task_id: str, result: ExecutionResult) -> None
     async def fail(self, task_id: str, reason: str) -> None
+
+    # Context for execution
+    async def get_repo_info(self, project_id: str) -> RepoInfo
+    async def get_rework_context(self, task_id: str) -> ReworkContext
+    async def count_rework_attempts(self, task_id: str) -> int
+    async def get_task_context(self, task_id: str) -> dict
+    async def add_note(self, task_id: str, content: str) -> None
 
     # Supervisor
     async def submit(self, task_id: str) -> None
@@ -462,11 +472,6 @@ class WorkSource(Protocol):
     # Judge
     async def submit_review(self, task_id: str, decision: str,
                             reason: str, reviewer_id: str) -> None
-
-    # Context for execution
-    async def get_repo_info(self, project_id: str) -> RepoInfo
-    async def get_rework_context(self, task_id: str) -> ReworkContext
-    async def count_rework_attempts(self, task_id: str) -> int
 ```
 
 ### VtfWorkSource — vtf implementation
@@ -480,7 +485,7 @@ the supervisor.
 class VtfWorkSource:
     """WorkSource backed by the vtf REST API."""
 
-    def __init__(self, client: VtfClient): ...
+    def __init__(self, client: VtfClient, tags: list[str] | None = None, pod_name: str | None = None): ...
 
     async def register(self, name, tags) -> AgentInfo:
         # POST /v1/agents/ — store token for future calls
