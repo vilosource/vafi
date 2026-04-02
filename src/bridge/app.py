@@ -196,7 +196,7 @@ def create_app(roles_config: str | None = None) -> FastAPI:
 
                     # Pod exists and is running — try to open exec and reconnect
                     role_config = roles.get(role_name)
-                    exec_cmd = pod_manager.build_exec_command()
+                    exec_cmd = pod_manager.build_exec_command(rpc=True)
                     exec_conn = await pod_manager.exec_pi(pod_name, exec_cmd)
 
                     from .pod_process import PodSession
@@ -393,7 +393,7 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             )
             pod_name = await pod_manager.create_or_get_pod(pod_spec)
 
-            exec_cmd = pod_manager.build_exec_command()
+            exec_cmd = pod_manager.build_exec_command(rpc=True)
             exec_conn = await pod_manager.exec_pi(pod_name, exec_cmd)
 
             pod_session = PodSession(ws=exec_conn, session_id=None)

@@ -40,10 +40,18 @@ class TestPodProcessManager:
         assert all(c.isalnum() or c == "-" for c in name)
 
     def test_exec_command_uses_connect_sh(self):
-        """Exec command uses /opt/vf-harness/connect.sh for all harnesses."""
+        """Exec command uses /opt/vf-harness/connect.sh for interactive."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
         cmd = mgr.build_exec_command()
         assert cmd == ["/opt/vf-harness/connect.sh"]
+
+    def test_exec_command_rpc_mode(self):
+        """RPC mode uses pi --mode rpc for locked sessions."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(rpc=True)
+        assert cmd[0] == "pi"
+        assert "--mode" in cmd
+        assert "rpc" in cmd
 
 
 class TestPodSession:
