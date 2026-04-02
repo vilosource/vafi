@@ -1,0 +1,31 @@
+infra:
+  # Base image contract
+  agent_user: agent
+  home_path: /home/agent
+  sessions_path: /sessions
+  ready_sentinel: /tmp/ready
+  harness_scripts: /opt/vf-harness
+
+  # SSH
+  ssh_secret: github-ssh
+  ssh_key_name: ssh-privatekey
+  ssh_mount_path: /home/agent/.ssh
+
+  # Sessions storage
+  sessions_pvc: console-sessions
+
+  # Readiness probe
+  readiness_probe:
+    command: ["test", "-f", "/tmp/ready"]
+    initial_delay: 5
+    period: 10
+
+  # Shared env vars (injected into all pods)
+  shared_env:
+    GIT_SSH_COMMAND: "ssh -i /home/agent/.ssh/id_rsa -o StrictHostKeyChecking=no"
+
+  # Template env vars (resolved at pod creation)
+  template_env:
+    VTF_API_URL: "{{ vtf_api_url }}"
+    VF_VTF_MCP_URL: "{{ vtf_mcp_url }}"
+    VF_CXDB_MCP_URL: "http://cxdb-mcp.{{ namespace }}.svc.cluster.local:8090/mcp"

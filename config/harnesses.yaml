@@ -1,0 +1,24 @@
+harnesses:
+  claude:
+    image: harbor.viloforge.com/vafi/vafi-agent:60e762d
+    description: Claude Code CLI
+    output_format: claude_json
+    supports_rpc: false
+    secrets:
+      - secret: vafi-secrets
+        env_map:
+          anthropic-auth-token: ANTHROPIC_AUTH_TOKEN
+          anthropic-base-url: ANTHROPIC_BASE_URL
+          vtf-token: VF_VTF_TOKEN
+
+  pi:
+    image: harbor.viloforge.com/vafi/vafi-agent-pi:60e762d
+    description: Pi coding agent
+    output_format: pi_jsonl
+    supports_rpc: true
+    secrets:
+      - secret: vafi-secrets
+        env_map:
+          anthropic-auth-token: ANTHROPIC_API_KEY
+          anthropic-base-url: ANTHROPIC_BASE_URL
+          vtf-token: VF_VTF_TOKEN

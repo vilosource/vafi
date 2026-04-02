@@ -1,0 +1,30 @@
+roles:
+  architect:
+    description: Interactive planning and design sessions
+    allowed_harnesses: [pi, claude]
+    default_harness: pi
+    env:
+      VF_AGENT_ROLE: architect
+    resources:
+      requests: {cpu: "500m", memory: "1Gi"}
+      limits: {cpu: "1", memory: "2Gi"}
+
+  executor:
+    description: Autonomous task execution
+    allowed_harnesses: [claude, pi]
+    default_harness: claude
+    env:
+      VF_AGENT_ROLE: executor
+    resources:
+      requests: {cpu: "1", memory: "2Gi"}
+      limits: {cpu: "2", memory: "4Gi"}
+
+  judge:
+    description: Code review and test verification
+    allowed_harnesses: [claude]
+    default_harness: claude
+    env:
+      VF_AGENT_ROLE: judge
+    resources:
+      requests: {cpu: "500m", memory: "1Gi"}
+      limits: {cpu: "1", memory: "2Gi"}
