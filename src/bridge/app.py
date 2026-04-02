@@ -152,9 +152,85 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             except Exception as e:
                 logger.error(f"Idle timeout loop error: {e}")
 
+    async def _recover_locks():
+        """B11: On startup, query vtf for active locks and reconnect to existing pods."""
+        if not lock_manager.use_vtf:
+            return
+        try:
+            from .vtf_locks import vtf_list_locks
+            active_locks = await vtf_list_locks()
+            if not active_locks:
+                logger.info("Recovery: no active locks in vtf")
+                return
+
+            logger.info(f"Recovery: found {len(active_locks)} active lock(s) in vtf")
+            for vtf_lock in active_locks:
+                project = vtf_lock.get("project_id", "")
+                role_name = vtf_lock.get("role", "")
+                username = vtf_lock.get("user", "")
+                vtf_pk = vtf_lock.get("id")
+
+                key = lock_manager._key(project, role_name)
+
+                # Check if pod still exists
+                try:
+                    from .pod_process import _sanitize_k8s_name
+                    pod_name = _sanitize_k8s_name(f"{role_name}-{project}-{username}")
+
+                    from kubernetes_asyncio import client as k8s_client, config as k8s_config
+                    k8s_config.load_incluster_config()
+                    async with k8s_client.ApiClient() as api:
+                        v1 = k8s_client.CoreV1Api(api)
+                        pod = await v1.read_namespaced_pod(pod_name, BRIDGE_NAMESPACE)
+                        if pod.status.phase != "Running":
+                            logger.warning(f"Recovery: pod {pod_name} not running ({pod.status.phase}), releasing lock")
+                            from .vtf_locks import vtf_release_lock
+                            await vtf_release_lock(vtf_pk)
+                            continue
+
+                    # Pod exists and is running — try to open exec and reconnect
+                    role_config = roles.get(role_name)
+                    exec_cmd = pod_manager.build_exec_command(
+                        project=project,
+                        methodology=role_config.methodology if role_config else "",
+                        provider="anthropic",
+                        model=role_config.model if role_config else "claude-sonnet-4-20250514",
+                        thinking_level=role_config.thinking_level if role_config else "medium",
+                    )
+                    exec_conn = await pod_manager.exec_pi(pod_name, exec_cmd)
+
+                    from .pod_process import PodSession
+                    pod_session = PodSession(ws=exec_conn, session_id=vtf_lock.get("session_id"))
+                    await pod_session.initialize()
+
+                    lock_manager._locks[key] = {
+                        "session_id": pod_session.session_id or vtf_lock.get("session_id", ""),
+                        "project": project,
+                        "role": role_name,
+                        "user_id": 0,  # Unknown from vtf list response
+                        "username": username,
+                        "locked_at": vtf_lock.get("created_at", ""),
+                        "last_activity": time.monotonic(),
+                        "vtf_pk": vtf_pk,
+                    }
+                    lock_manager.set_session(project, role_name, pod_session)
+                    logger.info(f"Recovery: reconnected lock {key} (pod={pod_name})")
+
+                except Exception as e:
+                    logger.warning(f"Recovery: failed to reconnect lock {key}: {e}. Releasing.")
+                    try:
+                        from .vtf_locks import vtf_release_lock
+                        await vtf_release_lock(vtf_pk)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            logger.error(f"Recovery failed: {e}")
+
     @app.on_event("startup")
     async def startup():
         asyncio.create_task(_idle_timeout_loop())
+        await _recover_locks()
 
     def _validate_prompt_request(body: BridgeRequest, user: dict) -> RoleConfig | None:
         """Common validation for prompt and prompt/stream endpoints."""

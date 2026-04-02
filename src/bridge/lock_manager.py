@@ -63,6 +63,13 @@ class LockManager:
 
     async def _acquire_vtf(self, user: dict, project: str, role: str, key: str) -> dict[str, Any]:
         from .vtf_locks import vtf_acquire_lock, LockConflictError as VtfConflict
+
+        # Check if we already have this lock in memory (reconnect within same bridge instance)
+        existing = self._locks.get(key)
+        if existing and existing["user_id"] == user["user_id"]:
+            existing["last_activity"] = time.monotonic()
+            return existing
+
         try:
             vtf_lock = await vtf_acquire_lock(project, role)
             lock = {
@@ -71,7 +78,7 @@ class LockManager:
                 "role": role,
                 "user_id": user["user_id"],
                 "username": user["username"],
-                "locked_at": vtf_lock.get("locked_at", ""),
+                "locked_at": vtf_lock.get("created_at", ""),
                 "last_activity": time.monotonic(),
                 "vtf_pk": vtf_lock.get("id"),
             }
