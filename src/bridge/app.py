@@ -20,6 +20,7 @@ from .pi_events import parse_pi_event
 from .pi_session import PiSession, PiSessionConfig, build_pi_env
 from .pod_process import PodProcessManager, PodSession
 from .roles import load_roles, RoleConfig
+from .session_recorder import SessionRecorder
 
 BRIDGE_NAMESPACE = os.environ.get("BRIDGE_NAMESPACE", "vafi-dev")
 AGENT_PI_IMAGE = os.environ.get("AGENT_PI_IMAGE", "harbor.viloforge.com/vafi/vafi-agent-pi:latest")
@@ -126,8 +127,13 @@ def create_app(roles_config: str | None = None) -> FastAPI:
     # Rate limiter
     rate_limiter = RateLimiter(max_requests=RATE_LIMIT_PER_MINUTE, window_seconds=60)
 
+    # Session recorder
+    vtf_api_url = os.environ.get("VTF_API_URL", "http://vtf-api.vtf-dev.svc.cluster.local:8000")
+    vtf_token = os.environ.get("VTF_API_TOKEN", "")
+    session_recorder = SessionRecorder(vtf_api_url=vtf_api_url, vtf_token=vtf_token) if vtf_token else None
+
     # Lock manager
-    use_vtf_locks = bool(os.environ.get("VTF_API_TOKEN", ""))
+    use_vtf_locks = bool(vtf_token)
     lock_manager = LockManager(
         idle_timeout_seconds=int(os.environ.get("LOCKED_IDLE_TIMEOUT_SECONDS", "14400")),
         use_vtf=use_vtf_locks,
@@ -294,6 +300,13 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             duration_ms = int((time.monotonic() - start_time) * 1000)
             lock_manager.touch(body.project, body.role)
 
+            if session_recorder:
+                await session_recorder.record(
+                    user_id=user["user_id"], project_id=body.project,
+                    role=body.role, channel=body.channel,
+                    session_id=result.get("session_id") or "",
+                )
+
             return BridgeResponse(
                 result=result.get("text", ""),
                 session_id=result.get("session_id") or "",
@@ -324,6 +337,13 @@ def create_app(roles_config: str | None = None) -> FastAPI:
 
             if result.get("error"):
                 raise HTTPException(status_code=502, detail=result["error"])
+
+            if session_recorder:
+                await session_recorder.record(
+                    user_id=user["user_id"], project_id=body.project,
+                    role=body.role, channel=body.channel,
+                    session_id=result.get("session_id") or "",
+                )
 
             return BridgeResponse(
                 result=result.get("text", ""),
