@@ -86,11 +86,14 @@ class PodProcessManager:
         """Build exec command for a locked session.
 
         For interactive terminals: uses /opt/vf-harness/connect.sh.
-        For RPC sessions (locked prompts): uses Pi --mode rpc directly,
-        since init.sh already configured models.json at pod startup.
+        For RPC sessions (locked prompts): sources init.sh for config,
+        then starts Pi in RPC mode.
         """
         if rpc:
-            return ["pi", "--mode", "rpc", "--no-session"]
+            return [
+                "bash", "-c",
+                "source /opt/vf-harness/init.sh && exec pi --mode rpc --no-session",
+            ]
         return ["/opt/vf-harness/connect.sh"]
 
     async def create_or_get_pod(self, spec: dict[str, Any]) -> str:
