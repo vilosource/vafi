@@ -9,7 +9,7 @@ import os
 
 from controller.config import AgentConfig
 from controller.controller import Controller
-from controller.vtf_client import VtfClient
+from vtf_sdk.async_client import AsyncVtfClient
 from controller.worksources.vtf import VtfWorkSource
 
 
@@ -32,8 +32,8 @@ async def main():
     logger.info("Starting vafi controller")
     logger.info(f"\n{config.display()}")
 
-    # Create VtfClient with bootstrap token for registration
-    vtf_client = VtfClient(base_url=config.vtf_api_url, token=config.vtf_token or None)
+    # Create AsyncVtfClient with bootstrap token for registration
+    vtf_client = AsyncVtfClient(url=config.vtf_api_url, token=config.vtf_token or "")
 
     try:
         async with vtf_client:
@@ -54,11 +54,11 @@ async def main():
                 )
 
                 class VtfSummaryStore:
-                    """Adapter: stores execution summary via VtfClient PATCH."""
-                    def __init__(self, client: VtfClient):
+                    """Adapter: stores execution summary via SDK task update."""
+                    def __init__(self, client: AsyncVtfClient):
                         self._client = client
                     async def store_summary(self, task_id: str, summary: dict) -> None:
-                        await self._client.update_task(task_id, {"execution_summary": summary})
+                        await self._client.tasks.update(task_id, execution_summary=summary)
 
                 # NL generator (Phase B) — uses Haiku via Anthropic API
                 nl_generator = None

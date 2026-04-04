@@ -1,11 +1,13 @@
 """VtfWorkSource implementation.
 
-This module implements the WorkSource protocol using the vtf REST API.
-It wraps VtfClient and contains vtf-specific logic like priority ordering
+This module implements the WorkSource protocol using the vtf Python SDK.
+It wraps AsyncVtfClient and contains vtf-specific logic like priority ordering
 (rework before new work), review parsing, and session ID extraction.
 """
-
 from typing import Any
+
+from vtf_sdk.async_client import AsyncVtfClient
+from vtf_sdk.entities import Task as SdkTask
 
 from ..types import (
     AgentInfo,
@@ -14,382 +16,185 @@ from ..types import (
     ReworkContext,
     TaskInfo,
 )
-from ..vtf_client import VtfClient
 
 
 class VtfWorkSource:
-    """WorkSource implementation backed by the vtf REST API."""
+    """WorkSource implementation backed by the vtf Python SDK."""
 
     def __init__(
         self,
-        client: VtfClient,
+        client: AsyncVtfClient,
         tags: list[str] | None = None,
         pod_name: str | None = None,
     ):
-        """Initialize with a VtfClient instance.
-
-        Args:
-            client: VtfClient for API communication
-            tags: Default agent tags for operations (can be overridden)
-            pod_name: Kubernetes pod name (from Downward API)
-        """
         self._client = client
         self._default_tags = tags or []
         self._pod_name = pod_name
 
     async def register(self, name: str, tags: list[str]) -> AgentInfo:
-        """Register an agent with vtf.
-
-        Calls the vtf agent registration endpoint and stores the returned
-        auth token for future requests.
-
-        Args:
-            name: Agent name
-            tags: Agent tags for task matching
-
-        Returns:
-            Agent information including ID and auth token
-        """
-        agent_data = await self._client.register_agent(name, tags, pod_name=self._pod_name)
-        # Store token on client for all subsequent authenticated calls
-        self._client.token = agent_data["token"]
-        return AgentInfo(
-            id=agent_data["id"],
-            token=agent_data["token"]
+        """Register an agent with vtf."""
+        agent, raw = await self._client.agents.register(
+            name=name, tags=tags, pod_name=self._pod_name,
         )
+        # Recreate the client with the returned token
+        token = raw.get("token", "")
+        self._client._transport._client.headers["authorization"] = f"Token {token}"
+        return AgentInfo(id=agent.id, token=token)
 
     async def poll(self, agent_id: str, tags: list[str]) -> TaskInfo | None:
-        """Poll for available work with priority ordering.
+        """Poll for available work with priority ordering."""
+        # Priority 1: Rework tasks (changes_requested)
+        rework_result = await self._client.tasks.list(status="changes_requested")
+        if rework_result.items:
+            return self._sdk_task_to_info(rework_result.items[0])
 
-        Priority 1: Rework tasks (changes_requested) assigned to this agent
-        Priority 2: New claimable work matching agent tags
-
-        Args:
-            agent_id: ID of the polling agent
-            tags: Agent tags for task matching
-
-        Returns:
-            Next task to execute, or None if no work available
-        """
-        # Priority 1: Check for rework (any changes_requested task)
-        rework_tasks = await self._client.list_tasks(
-            status="changes_requested",
-            expand=["reviews"]
-        )
-        if rework_tasks:
-            task_data = rework_tasks[0]  # Take the first rework task
-            return self._task_data_to_info(task_data)
-
-        # Priority 2: Check for new claimable work
-        claimable_tasks = await self._client.list_claimable(tags, agent_id)
-        if claimable_tasks:
-            task_data = claimable_tasks[0]  # Take the first claimable task
-            return self._task_data_to_info(task_data)
+        # Priority 2: Claimable work
+        claimable_result = await self._client.tasks.claimable(tags=tags)
+        if claimable_result.items:
+            return self._sdk_task_to_info(claimable_result.items[0])
 
         return None
 
     async def poll_reviews(self, agent_id: str) -> TaskInfo | None:
-        """Poll for tasks pending completion review (judge work).
-
-        Args:
-            agent_id: ID of the polling agent
-
-        Returns:
-            Next task to review, or None if no reviews pending
-        """
-        review_tasks = await self._client.list_tasks(
-            status="pending_completion_review",
-        )
-        if review_tasks:
-            task_data = review_tasks[0]
-            return self._task_data_to_info(task_data)
+        """Poll for tasks pending completion review (judge work)."""
+        review_result = await self._client.tasks.list(status="pending_completion_review")
+        if review_result.items:
+            return self._sdk_task_to_info(review_result.items[0])
         return None
 
     async def claim(self, task_id: str, agent_id: str) -> TaskInfo:
-        """Claim a task for execution.
-
-        Args:
-            task_id: Task ID to claim
-            agent_id: ID of the claiming agent
-
-        Returns:
-            Updated task information
-        """
-        # Use default tags from constructor for validation
-        task_data = await self._client.claim_task(task_id, agent_id, self._default_tags)
-        return self._task_data_to_info(task_data)
+        """Claim a task for execution."""
+        task = await self._client.tasks.claim(task_id, agent_id=agent_id)
+        return self._sdk_task_to_info(task)
 
     async def heartbeat(self, task_id: str) -> None:
-        """Send heartbeat for a claimed task.
-
-        Args:
-            task_id: Task ID being executed
-        """
-        await self._client.heartbeat(task_id)
+        """Send heartbeat for a claimed task."""
+        await self._client.tasks.heartbeat(task_id)
 
     async def agent_heartbeat(self, agent_id: str) -> None:
-        """Send agent-level heartbeat to signal the agent is alive.
-
-        Args:
-            agent_id: Agent ID sending the heartbeat
-        """
+        """Send agent-level heartbeat."""
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         payload: dict[str, Any] = {"last_heartbeat": now}
         if self._pod_name is not None:
             payload["pod_name"] = self._pod_name
-        await self._client.update_agent(agent_id, payload)
+        await self._client.agents.update(agent_id, **payload)
 
     async def set_agent_offline(self, agent_id: str) -> None:
-        """Mark agent as offline during graceful shutdown.
-
-        Args:
-            agent_id: Agent ID going offline
-        """
-        await self._client.update_agent(agent_id, {"status": "offline"})
+        """Mark agent as offline during graceful shutdown."""
+        await self._client.agents.update_status(agent_id, status="offline")
 
     async def complete(self, task_id: str, result: ExecutionResult) -> None:
-        """Mark a task as completed with execution results.
+        """Mark a task as completed with execution results."""
+        await self._client.tasks.add_note(task_id, text=result.completion_report)
 
-        Stores the completion report, session ID, and execution metadata
-        as notes, then transitions the task to completion state.
-
-        Args:
-            task_id: Task ID being completed
-            result: Execution results
-        """
-        # Store completion report as a note
-        await self._client.add_note(
-            task_id=task_id,
-            text=result.completion_report,
-            actor_id="controller"  # TODO: Use actual agent ID
-        )
-
-        # Store session ID for rework resumption (if available)
         if result.session_id:
-            await self._client.add_note(
-                task_id=task_id,
-                text=f"vafi:session_id={result.session_id}",
-                actor_id="controller"
+            await self._client.tasks.add_note(
+                task_id, text=f"vafi:session_id={result.session_id}",
             )
 
-        # Store execution metadata
         metadata_text = (
             f"vafi:execution_metadata\n"
             f"cost_usd: {result.cost_usd}\n"
             f"num_turns: {result.num_turns}\n"
             f"gates: {len(result.gate_results)} executed"
         )
-        await self._client.add_note(
-            task_id=task_id,
-            text=metadata_text,
-            actor_id="controller"
-        )
-
-        # Complete the task
-        await self._client.complete_task(task_id)
+        await self._client.tasks.add_note(task_id, text=metadata_text)
+        await self._client.tasks.complete(task_id)
 
     async def fail(self, task_id: str, reason: str) -> None:
-        """Mark a task as failed.
-
-        Stores the failure reason as a note, then transitions to failed state.
-
-        Args:
-            task_id: Task ID being failed
-            reason: Failure reason for human triage
-        """
-        # Store failure reason as a note
-        await self._client.add_note(
-            task_id=task_id,
-            text=f"Task failed: {reason}",
-            actor_id="controller"
-        )
-
-        # Fail the task
-        await self._client.fail_task(task_id)
+        """Mark a task as failed."""
+        await self._client.tasks.add_note(task_id, text=f"Task failed: {reason}")
+        await self._client.tasks.fail(task_id)
 
     async def get_task_context(self, task_id: str) -> dict:
-        """Get full task data with reviews and notes for context building.
-
-        Args:
-            task_id: Task ID
-
-        Returns:
-            Dict with 'task' (including reviews) and 'notes' keys
-        """
-        task_data = await self._client.get_task(task_id, expand=["reviews"])
+        """Get full task data with reviews and notes."""
+        task = await self._client.tasks.get(task_id, expand=["reviews"])
         try:
-            notes = await self._client.list_notes(task_id)
+            notes_result = await self._client.tasks.list_notes(task_id)
+            notes = [{"text": n.text, "actor": str(n.actor) if n.actor else ""} for n in notes_result.items]
         except Exception:
             notes = []
-        return {"task": task_data, "notes": notes}
+        return {"task": task.model_dump(mode="json"), "notes": notes}
 
     async def add_note(self, task_id: str, text: str, actor_id: str) -> None:
-        """Add a note to a task.
-
-        Args:
-            task_id: Task ID
-            text: Note content
-            actor_id: ID of the actor adding the note
-        """
-        await self._client.add_note(task_id=task_id, text=text, actor_id=actor_id)
+        """Add a note to a task."""
+        await self._client.tasks.add_note(task_id, text=text)
 
     async def get_repo_info(self, project_id: str) -> RepoInfo:
-        """Get repository information for a project.
-
-        Args:
-            project_id: Project ID from task
-
-        Returns:
-            Repository URL and default branch
-        """
-        project_data = await self._client.get_project(project_id)
-        return RepoInfo(
-            url=project_data["repo_url"],
-            branch=project_data["default_branch"]
-        )
+        """Get repository information for a project."""
+        project = await self._client.projects.get(project_id)
+        return RepoInfo(url=project.repo_url, branch=project.default_branch or "main")
 
     async def get_rework_context(self, task_id: str) -> ReworkContext:
-        """Get context for rework execution.
+        """Get context for rework execution."""
+        task = await self._client.tasks.get(task_id, expand=["reviews"])
 
-        Extracts judge feedback from the latest changes_requested review
-        and looks for session ID in task notes.
-
-        Args:
-            task_id: Task ID being reworked
-
-        Returns:
-            Rework context including judge feedback and attempt count
-        """
-        # Get task with reviews to find judge feedback
-        task_data = await self._client.get_task(task_id, expand=["reviews"])
-
-        # Find the latest changes_requested review
         judge_feedback = ""
-        reviews = task_data.get("reviews", [])
-        for review in reversed(reviews):  # Most recent first
-            if review.get("decision") == "changes_requested":
-                judge_feedback = review.get("reason", "No feedback provided")
-                break
+        if task.reviews:
+            for review in reversed(task.reviews):
+                if review.decision == "changes_requested":
+                    judge_feedback = review.reason or "No feedback provided"
+                    break
 
-        # Try to find session ID from previous execution
         session_id = None
         try:
-            notes = await self._client.list_notes(task_id)
-            for note in notes:
-                text = note.get("text", "")
-                if text.startswith("vafi:session_id="):
-                    session_id = text.split("=", 1)[1].strip()
+            notes_result = await self._client.tasks.list_notes(task_id)
+            for note in notes_result.items:
+                if note.text.startswith("vafi:session_id="):
+                    session_id = note.text.split("=", 1)[1].strip()
                     break
         except Exception:
-            # If we can't get notes, continue without session resumption
             pass
 
-        # Count attempts
         attempt_number = await self.count_rework_attempts(task_id)
-
         return ReworkContext(
             session_id=session_id,
             judge_feedback=judge_feedback,
-            attempt_number=attempt_number
+            attempt_number=attempt_number,
         )
 
     async def count_rework_attempts(self, task_id: str) -> int:
-        """Count the number of rework attempts for a task.
-
-        Args:
-            task_id: Task ID to check
-
-        Returns:
-            Number of changes_requested reviews
-        """
-        task_data = await self._client.get_task(task_id, expand=["reviews"])
-        reviews = task_data.get("reviews", [])
-
-        count = 0
-        for review in reviews:
-            if review.get("decision") == "changes_requested":
-                count += 1
-
-        return count
+        """Count the number of rework attempts for a task."""
+        task = await self._client.tasks.get(task_id, expand=["reviews"])
+        if not task.reviews:
+            return 0
+        return sum(1 for r in task.reviews if r.decision == "changes_requested")
 
     async def submit(self, task_id: str) -> None:
-        """Submit a task from draft to todo status (supervisor operation).
-
-        Args:
-            task_id: Task ID to submit
-        """
-        await self._client.submit_task(task_id)
+        """Submit a task from draft to todo status."""
+        await self._client.tasks.submit(task_id)
 
     async def list_submittable(self) -> list[TaskInfo]:
-        """List tasks that can be submitted (supervisor operation).
-
-        Returns tasks in draft status where all dependencies are completed.
-
-        Returns:
-            List of submittable tasks
-        """
-        # Get all draft tasks with their dependencies
-        draft_tasks = await self._client.list_tasks(
-            status="draft",
-            expand=["links"]
-        )
-
+        """List tasks that can be submitted (draft with completed deps)."""
+        draft_result = await self._client.tasks.list(status="draft")
         submittable = []
-        for task_data in draft_tasks:
-            # Check if all dependencies are completed
-            dependencies = task_data.get("depends_on", [])
-            if self._are_dependencies_completed(task_data):
-                submittable.append(self._task_data_to_info(task_data))
-
+        for task in draft_result.items:
+            if self._are_dependencies_completed(task):
+                submittable.append(self._sdk_task_to_info(task))
         return submittable
 
     async def submit_review(self, task_id: str, decision: str, reason: str, reviewer_id: str) -> None:
-        """Submit a review for a completed task (judge operation).
+        """Submit a review for a completed task."""
+        await self._client.tasks.submit_review(
+            task_id, decision=decision, reason=reason, reviewer_type="agent",
+        )
 
-        Args:
-            task_id: Task ID being reviewed
-            decision: Review decision ("approved" or "changes_requested")
-            reason: Review reasoning/feedback
-            reviewer_id: ID of the reviewer
-        """
-        await self._client.submit_review(task_id, decision, reason, reviewer_id)
-
-    def _are_dependencies_completed(self, task_data: dict[str, Any]) -> bool:
-        """Check if all task dependencies are completed.
-
-        Args:
-            task_data: Task data with expanded links
-
-        Returns:
-            True if all dependencies are done, False otherwise
-        """
-        dependencies = task_data.get("depends_on", [])
-        if not dependencies:
+    def _are_dependencies_completed(self, task: SdkTask) -> bool:
+        """Check if all task dependencies are completed."""
+        if not task.requires:
             return True
+        return all(dep.status == "done" for dep in task.requires)
 
-        # Check each dependency status
-        for dep_task_data in dependencies:
-            if dep_task_data.get("status") != "done":
-                return False
-
-        return True
-
-    def _task_data_to_info(self, task_data: dict[str, Any]) -> TaskInfo:
-        """Convert vtf task data to TaskInfo.
-
-        Args:
-            task_data: Raw task data from vtf API
-
-        Returns:
-            Parsed TaskInfo instance
-        """
+    def _sdk_task_to_info(self, task: SdkTask) -> TaskInfo:
+        """Convert SDK Task entity to internal TaskInfo."""
+        project_id = task.project.id if task.project else ""
         return TaskInfo(
-            id=task_data["id"],
-            title=task_data["title"],
-            spec=task_data["spec"],
-            project_id=task_data["project"],
-            test_command=task_data.get("test_command", {}),
-            needs_review=task_data.get("needs_review_on_completion", False),
-            assigned_to=task_data.get("assigned_to")
+            id=task.id,
+            title=task.title,
+            spec=task.spec,
+            project_id=project_id,
+            test_command=task.test_command,
+            needs_review=task.needs_review_on_completion or False,
+            assigned_to=str(task.assigned_to) if task.assigned_to else None,
         )
