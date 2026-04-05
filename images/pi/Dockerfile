@@ -33,6 +33,10 @@ RUN mkdir -p /home/agent/.pi/agent && \
 COPY init.sh connect.sh run.sh /opt/vf-harness/
 RUN chmod +x /opt/vf-harness/init.sh /opt/vf-harness/connect.sh /opt/vf-harness/run.sh
 
+# Allow agent user to manage npm global packages at runtime
+# (Pi may reinstall/update pi-mcp-adapter on startup)
+RUN chown -R agent:agent /usr/local/lib/node_modules /usr/local/bin
+
 USER agent
 
 # Verify

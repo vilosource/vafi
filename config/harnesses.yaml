@@ -12,7 +12,7 @@ harnesses:
           vtf-token: VF_VTF_TOKEN
 
   pi:
-    image: harbor.viloforge.com/vafi/vafi-agent-pi:2c64c34
+    image: harbor.viloforge.com/vafi/vafi-agent-pi:d84c1e8-npm-fix
     description: Pi coding agent
     output_format: pi_jsonl
     supports_rpc: true
