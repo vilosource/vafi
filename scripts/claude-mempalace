@@ -64,6 +64,7 @@ if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ] && [ -f "$CREDS" ]; then
     env_args+=(-e "CLAUDE_CREDENTIALS=$(cat "$CREDS")")
 fi
 
+
 # GitLab
 for gl_var in GITLAB_TOKEN GITLAB_HOST; do
     eval "val=\${${gl_var}:-}"
