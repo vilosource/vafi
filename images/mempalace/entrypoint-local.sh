@@ -86,6 +86,7 @@ cfg.setdefault("mcpServers", {})["mempalace"] = {
 
 cfg["hasCompletedOnboarding"] = True
 cfg["autoUpdates"] = False
+cfg["installMethod"] = "npm"
 cfg.setdefault("projects", {})["/workspace"] = {
     "hasTrustDialogAccepted": True,
     "hasCompletedProjectOnboarding": True,
