@@ -1,0 +1,51 @@
+#!/bin/bash
+# claude-mempalace — Claude Code with persistent MemPalace memory
+#
+# Launches a Docker container with Claude Code + MemPalace MCP tools.
+# Auth comes from the host ~/.claude directory (OAuth subscription).
+# Palace selection controls which memory volume is mounted.
+#
+# Usage:
+#   claude-mempalace                          # default palace, current dir
+#   claude-mempalace customer-acme            # isolated palace, current dir
+#   claude-mempalace customer-acme ~/project  # isolated palace, specific dir
+#   claude-mempalace --list                   # list palaces
+#   claude-mempalace --delete <name>          # delete a palace volume
+set -euo pipefail
+
+IMAGE="${MEMPALACE_IMAGE:-harbor.viloforge.com/vafi/vafi-claude-mempalace:latest}"
+VOLUME_PREFIX="mempalace"
+
+# --- Subcommands ---
+
+if [[ "${1:-}" == "--list" ]]; then
+    echo "PALACE              SIZE        CREATED"
+    docker volume ls --format '{{.Name}}\t{{.Driver}}' | grep "^${VOLUME_PREFIX}-" | while read -r name _; do
+        palace="${name#${VOLUME_PREFIX}-}"
+        size=$(docker system df -v 2>/dev/null | grep "$name" | awk '{print $3}' || echo "?")
+        created=$(docker volume inspect "$name" --format '{{.CreatedAt}}' 2>/dev/null | cut -d'T' -f1 || echo "?")
+        printf "%-20s%-12s%s\n" "$palace" "$size" "$created"
+    done
+    exit 0
+fi
+
+if [[ "${1:-}" == "--delete" ]]; then
+    [[ -z "${2:-}" ]] && echo "Usage: claude-mempalace --delete <palace-name>" && exit 1
+    docker volume rm "${VOLUME_PREFIX}-${2}" 2>/dev/null && echo "Deleted palace: ${2}" || echo "Palace not found: ${2}"
+    exit 0
+fi
+
+# --- Launch ---
+
+PALACE="${1:-default}"
+WORKDIR="${2:-.}"
+
+exec docker run -it --rm \
+    --name "claude-mp-$$-$(date +%s)" \
+    -v "${HOME}/.claude:/home/agent/.claude-host:ro" \
+    -v "${HOME}/.claude.json:/home/agent/.claude-host.json:ro" \
+    -v "${VOLUME_PREFIX}-${PALACE}:/home/agent/.mempalace" \
+    -v "$(realpath "$WORKDIR"):/workspace" \
+    --entrypoint /opt/mempalace/entrypoint-local.sh \
+    "$IMAGE" \
+    claude --dangerously-skip-permissions

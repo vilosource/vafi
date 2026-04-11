@@ -35,5 +35,19 @@ docker build \
     -f "${REPO_ROOT}/images/agent/Dockerfile" \
     "${REPO_ROOT}"
 
+echo "==> Building vafi-claude-mempalace"
+docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    -t "${REGISTRY}/vafi-claude-mempalace:latest" \
+    "${REPO_ROOT}/images/mempalace"
+
+echo "==> Building vafi-agent-mempalace"
+docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    --build-arg "HARNESS_IMAGE=${REGISTRY}/vafi-claude-mempalace:latest" \
+    -t "${REGISTRY}/vafi-agent-mempalace:latest" \
+    -f "${REPO_ROOT}/images/agent/Dockerfile" \
+    "${REPO_ROOT}"
+
 echo "==> Done"
 docker images | grep vafi

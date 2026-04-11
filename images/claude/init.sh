@@ -32,6 +32,13 @@ cxdb_mcp = os.environ.get("VF_CXDB_MCP_URL", "")
 if cxdb_mcp:
     cfg.setdefault("mcpServers", {})["cxdb"] = {"type": "http", "url": cxdb_mcp}
 
+mempalace = os.environ.get("MEMPALACE_ENABLED", "").lower()
+if mempalace in ("true", "1", "yes"):
+    cfg.setdefault("mcpServers", {})["mempalace"] = {
+        "command": "python3",
+        "args": ["-m", "mempalace.mcp_server"]
+    }
+
 with open(cfg_path, "w") as f: json.dump(cfg, f, indent=2)
 PYEOF
 

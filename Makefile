@@ -1,4 +1,6 @@
-.PHONY: build build-base build-claude push test helm-template helm-lint help
+REGISTRY ?= vafi
+
+.PHONY: build build-base build-claude build-mempalace build-agent-mempalace push test helm-template helm-lint help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -14,6 +16,17 @@ build-base: ## Rebuild base image layer (Node + system tools)
 
 build-claude: ## Rebuild claude image layer (Claude CLI + cxtx)
 	./scripts/build-images.sh --claude-only
+
+build-mempalace: ## Build mempalace image layer (Claude + MemPalace)
+	docker build --build-arg REGISTRY=$(REGISTRY) \
+		-t $(REGISTRY)/vafi-claude-mempalace:latest \
+		images/mempalace
+
+build-agent-mempalace: build-mempalace ## Build agent image with mempalace
+	docker build --build-arg REGISTRY=$(REGISTRY) \
+		--build-arg HARNESS_IMAGE=$(REGISTRY)/vafi-claude-mempalace:latest \
+		-t $(REGISTRY)/vafi-agent-mempalace:latest \
+		-f images/agent/Dockerfile .
 
 push: ## Push images to registry
 	./scripts/push-images.sh
