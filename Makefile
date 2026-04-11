@@ -1,6 +1,6 @@
 REGISTRY ?= vafi
 
-.PHONY: build build-base build-claude build-mempalace build-agent-mempalace push test helm-template helm-lint help
+.PHONY: build build-base build-claude build-mempalace build-agent-mempalace build-devtools build-developer push test helm-template helm-lint help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -27,6 +27,16 @@ build-agent-mempalace: build-mempalace ## Build agent image with mempalace
 		--build-arg HARNESS_IMAGE=$(REGISTRY)/vafi-claude-mempalace:latest \
 		-t $(REGISTRY)/vafi-agent-mempalace:latest \
 		-f images/agent/Dockerfile .
+
+build-devtools: ## Build devtools image (az, terraform, ansible, vault, kubectl, helm, go, etc.)
+	docker build --build-arg REGISTRY=$(REGISTRY) \
+		-t $(REGISTRY)/vafi-devtools:latest \
+		images/devtools
+
+build-developer: build-devtools ## Build full developer image (devtools + mempalace + shell niceties)
+	docker build --build-arg REGISTRY=$(REGISTRY) \
+		-t $(REGISTRY)/vafi-developer:latest \
+		images/developer
 
 push: ## Push images to registry
 	./scripts/push-images.sh

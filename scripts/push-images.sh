@@ -32,4 +32,18 @@ else
     echo "==> Skipping vafi-agent-mempalace (not built yet)"
 fi
 
+if docker image inspect "${REGISTRY}/vafi-devtools:latest" &>/dev/null; then
+    echo "==> Pushing vafi-devtools"
+    docker push "${REGISTRY}/vafi-devtools:latest"
+else
+    echo "==> Skipping vafi-devtools (not built yet)"
+fi
+
+if docker image inspect "${REGISTRY}/vafi-developer:latest" &>/dev/null; then
+    echo "==> Pushing vafi-developer"
+    docker push "${REGISTRY}/vafi-developer:latest"
+else
+    echo "==> Skipping vafi-developer (not built yet)"
+fi
+
 echo "==> Done"
