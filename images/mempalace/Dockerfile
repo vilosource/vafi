@@ -15,7 +15,8 @@ USER root
 COPY entrypoint-local.sh /opt/mempalace/entrypoint-local.sh
 RUN chmod +x /opt/mempalace/entrypoint-local.sh
 
-RUN chmod 777 /home/agent
+# Writable by any uid (container runs as host user via --user flag)
+RUN chmod 777 /home/agent /home/agent/.mempalace /home/agent/.cache
 
 USER agent
 WORKDIR /workspace

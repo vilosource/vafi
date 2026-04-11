@@ -68,8 +68,8 @@ RUN ln -sf /usr/bin/batcat /usr/local/bin/bat 2>/dev/null || true \
 COPY entrypoint-local.sh /opt/mempalace/entrypoint-local.sh
 RUN chmod +x /opt/mempalace/entrypoint-local.sh
 
-# /home/agent must be writable by any uid (container may run as host user)
-RUN chmod 777 /home/agent
+# Writable by any uid (container runs as host user via --user flag)
+RUN chmod -R 777 /home/agent
 
 USER agent
 WORKDIR /workspace
