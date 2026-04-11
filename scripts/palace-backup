@@ -1,0 +1,75 @@
+#!/bin/bash
+# Backup/restore mempalace data from a palace's home volume.
+#
+# Usage:
+#   palace-backup export <palace>              # → mempalace-<palace>.tar.gz
+#   palace-backup export <palace> <file>       # → custom path
+#   palace-backup import <palace> <file>       # restore from backup
+#   palace-backup list                         # show palaces + sizes
+set -euo pipefail
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    export)
+        PALACE="${1:?Usage: palace-backup export <palace> [file]}"
+        VOLUME="mempalace-${PALACE}-home"
+        OUTFILE="${2:-mempalace-${PALACE}.tar.gz}"
+
+        if ! docker volume inspect "$VOLUME" &>/dev/null; then
+            echo "Volume $VOLUME does not exist." && exit 1
+        fi
+
+        docker run --rm \
+            -v "${VOLUME}:/home/agent:ro" \
+            -v "$(pwd):/backup" \
+            alpine tar czf "/backup/${OUTFILE}" -C /home/agent .mempalace
+
+        echo "Exported to ${OUTFILE} ($(du -h "$OUTFILE" | cut -f1))"
+        ;;
+
+    import)
+        PALACE="${1:?Usage: palace-backup import <palace> <file>}"
+        FILE="${2:?Usage: palace-backup import <palace> <file>}"
+        VOLUME="mempalace-${PALACE}-home"
+
+        if [ ! -f "$FILE" ]; then
+            echo "File not found: $FILE" && exit 1
+        fi
+
+        # Create volume if it doesn't exist
+        docker volume create "$VOLUME" &>/dev/null
+
+        docker run --rm \
+            -v "${VOLUME}:/home/agent" \
+            -v "$(realpath "$FILE"):/backup/archive.tar.gz:ro" \
+            alpine sh -c "
+                rm -rf /home/agent/.mempalace
+                tar xzf /backup/archive.tar.gz -C /home/agent
+                chown -R 1001:1001 /home/agent/.mempalace
+            "
+
+        echo "Imported $FILE into $VOLUME"
+        ;;
+
+    list)
+        echo "PALACE              DRAWERS     VOLUME SIZE"
+        docker volume ls --format '{{.Name}}' | grep '^mempalace-.*-home$' | while read -r vol; do
+            palace="${vol#mempalace-}"
+            palace="${palace%-home}"
+            drawers=$(docker run --rm -v "${vol}:/home/agent:ro" alpine \
+                sh -c "ls /home/agent/.mempalace/palace/chroma/ 2>/dev/null | wc -l" 2>/dev/null || echo "?")
+            size=$(docker system df -v 2>/dev/null | grep "$vol" | awk '{print $3}' || echo "?")
+            printf "%-20s%-12s%s\n" "$palace" "$drawers" "$size"
+        done
+        ;;
+
+    *)
+        echo "Usage:"
+        echo "  palace-backup export <palace> [file]   Export palace memories to tar.gz"
+        echo "  palace-backup import <palace> <file>   Restore palace from backup"
+        echo "  palace-backup list                     List palaces"
+        exit 1
+        ;;
+esac
