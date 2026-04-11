@@ -51,6 +51,11 @@ RUN curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux
 RUN pip install --break-system-packages ruff mypy pre-commit
 
 # ---------------------------------------------------------------------------
+# MCP MediaWiki (stdio server for self-hosted wikis)
+# ---------------------------------------------------------------------------
+RUN pip install --break-system-packages git+https://github.com/vilosource/mcp-mediawiki.git
+
+# ---------------------------------------------------------------------------
 # Symlinks for Debian naming quirks
 # ---------------------------------------------------------------------------
 RUN ln -sf /usr/bin/batcat /usr/local/bin/bat 2>/dev/null || true \

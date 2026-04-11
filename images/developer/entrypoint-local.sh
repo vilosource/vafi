@@ -42,12 +42,27 @@ cfg = {
             "args": ["-m", "mempalace.mcp_server"]
         }
     },
-    "projects": {
-        "/workspace": {
-            "hasTrustDialogAccepted": True,
-            "hasCompletedProjectOnboarding": True,
-        }
-    },
+}
+
+# MediaWiki MCP (registered when MW_API_HOST is set)
+mw_host = os.environ.get("MW_API_HOST", "")
+if mw_host:
+    mw_env = {}
+    for key in ("MW_API_HOST", "MW_API_PATH", "MW_USE_HTTPS", "MW_BOT_USER", "MW_BOT_PASS"):
+        val = os.environ.get(key, "")
+        if val:
+            mw_env[key] = val
+    cfg["mcpServers"]["mediawiki"] = {
+        "command": "mcp-mediawiki",
+        "args": ["--transport", "stdio"],
+        "env": mw_env,
+    }
+
+cfg["projects"] = {
+    "/workspace": {
+        "hasTrustDialogAccepted": True,
+        "hasCompletedProjectOnboarding": True,
+    }
 }
 
 cfg_path = "/home/agent/.claude.json"
@@ -75,10 +90,15 @@ done
 mkdir -p /workspace
 chown agent:agent /workspace
 
-# Pass z.ai env vars through to the agent user's environment
+# Pass env vars through to the agent user's environment
 EXPORT_VARS=""
 [ -n "$ANTHROPIC_AUTH_TOKEN" ] && EXPORT_VARS="export ANTHROPIC_AUTH_TOKEN='$ANTHROPIC_AUTH_TOKEN'; "
 [ -n "$ANTHROPIC_BASE_URL" ] && EXPORT_VARS="${EXPORT_VARS}export ANTHROPIC_BASE_URL='$ANTHROPIC_BASE_URL'; "
+# MediaWiki vars (needed by the stdio MCP subprocess)
+for mw_var in MW_API_HOST MW_API_PATH MW_USE_HTTPS MW_BOT_USER MW_BOT_PASS; do
+    eval "val=\$$mw_var"
+    [ -n "$val" ] && EXPORT_VARS="${EXPORT_VARS}export ${mw_var}='${val}'; "
+done
 
 CMD="${EXPORT_VARS}cd /workspace"
 if [ $# -gt 0 ]; then

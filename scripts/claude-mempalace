@@ -49,6 +49,12 @@ if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
     [ -n "${ANTHROPIC_BASE_URL:-}" ] && env_args+=(-e "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL")
 fi
 
+# MediaWiki: pass env vars if set
+for mw_var in MW_API_HOST MW_API_PATH MW_USE_HTTPS MW_BOT_USER MW_BOT_PASS; do
+    eval "val=\${${mw_var}:-}"
+    [ -n "$val" ] && env_args+=(-e "${mw_var}=${val}")
+done
+
 # OAuth auth: mount only the credentials file
 CREDS="${HOME}/.claude/.credentials.json"
 if [ -f "$CREDS" ]; then
