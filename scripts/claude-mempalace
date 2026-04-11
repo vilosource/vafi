@@ -83,5 +83,6 @@ exec docker run -it --rm \
     --name "claude-mp-$$-$(date +%s)" \
     "${env_args[@]}" \
     -v "${VOLUME_PREFIX}-${PALACE}:/home/agent/.mempalace" \
+    -v "developer-azure-cache:/home/agent/.azure" \
     -v "${RESOLVED}:/workspace" \
     "$IMAGE"
