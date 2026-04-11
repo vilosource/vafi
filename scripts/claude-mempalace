@@ -1,9 +1,9 @@
 #!/bin/bash
 # claude-mempalace — Claude Code with persistent MemPalace memory
 #
-# Launches a Docker container with Claude Code + MemPalace MCP tools.
-# Auth comes from the host ~/.claude directory (OAuth subscription).
-# Palace selection controls which memory volume is mounted.
+# Auth (auto-detected):
+#   Default: mounts host ~/.claude for OAuth subscription auth
+#   z.ai:    set ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL env vars
 #
 # Usage:
 #   claude-mempalace                          # default palace, current dir
@@ -40,10 +40,26 @@ fi
 PALACE="${1:-default}"
 WORKDIR="${2:-.}"
 
+# Build volume mounts and env args
+mount_args=()
+env_args=()
+
+# z.ai auth: pass env vars into container
+if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+    env_args+=(-e "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN")
+    [ -n "${ANTHROPIC_BASE_URL:-}" ] && env_args+=(-e "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL")
+fi
+
+# OAuth auth: mount host .claude dir (always mount — entrypoint decides what to use)
+mount_args+=(
+    -v "${HOME}/.claude:/home/agent/.claude-host:ro"
+    -v "${HOME}/.claude.json:/home/agent/.claude-host.json:ro"
+)
+
 exec docker run -it --rm \
     --name "claude-mp-$$-$(date +%s)" \
-    -v "${HOME}/.claude:/home/agent/.claude-host:ro" \
-    -v "${HOME}/.claude.json:/home/agent/.claude-host.json:ro" \
+    "${mount_args[@]}" \
+    "${env_args[@]}" \
     -v "${VOLUME_PREFIX}-${PALACE}:/home/agent/.mempalace" \
     -v "$(realpath "$WORKDIR"):/workspace" \
     --entrypoint /opt/mempalace/entrypoint-local.sh \
