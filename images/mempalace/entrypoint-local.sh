@@ -28,13 +28,25 @@ for f in .credentials.json settings.json; do
 done
 
 # Symlink remaining subdirs (plugins, agents, etc.)
+# Skip dirs that Claude Code needs to write to — create those as real dirs instead.
+WRITABLE_DIRS="session-env projects plans history cache"
 if [ -d "$AGENT_HOME/.claude-host" ]; then
     for item in "$AGENT_HOME/.claude-host"/*/; do
         [ -d "$item" ] || continue
         name=$(basename "$item")
-        [ ! -e "$AGENT_HOME/.claude/$name" ] && ln -s "$item" "$AGENT_HOME/.claude/$name" 2>/dev/null || true
+        skip=false
+        for w in $WRITABLE_DIRS; do [ "$name" = "$w" ] && skip=true; done
+        if [ "$skip" = "false" ] && [ ! -e "$AGENT_HOME/.claude/$name" ]; then
+            ln -s "$item" "$AGENT_HOME/.claude/$name" 2>/dev/null || true
+        fi
     done
 fi
+
+# Ensure writable dirs exist for Claude Code runtime
+for d in $WRITABLE_DIRS; do
+    mkdir -p "$AGENT_HOME/.claude/$d"
+    chown agent:agent "$AGENT_HOME/.claude/$d"
+done
 
 # Inject mempalace MCP + trust workspace
 python3 << 'PYEOF'
