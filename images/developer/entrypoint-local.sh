@@ -107,6 +107,24 @@ for d in session-env projects plans history cache; do
     mkdir -p ~/.claude/$d
 done
 
+# --- CLAUDE.md: tell Claude about mempalace ---
+
+cat > ~/.claude/CLAUDE.md << 'CLAUDEMD'
+## Memory System: MemPalace
+
+You have persistent memory via the mempalace MCP tools. Use them actively:
+
+- **mempalace_search**: Find what you've learned before. Search BEFORE starting work.
+- **mempalace_diary_write**: Save important findings, decisions, gotchas as you work.
+- **mempalace_kg_add**: Record relationships between entities (projects, tools, people).
+- **mempalace_add_drawer**: Store detailed content for later retrieval.
+
+When a Stop hook fires asking you to save to your memory system, use the mempalace
+diary and drawer tools to save key topics, decisions, and findings from the session.
+
+When a PreCompact hook fires, save EVERYTHING important — context is about to be compressed.
+CLAUDEMD
+
 # --- glab (GitLab CLI) config ---
 
 if [ -n "$GITLAB_TOKEN" ]; then
