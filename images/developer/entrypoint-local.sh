@@ -112,17 +112,43 @@ done
 cat > ~/.claude/CLAUDE.md << 'CLAUDEMD'
 ## Memory System: MemPalace
 
-You have persistent memory via the mempalace MCP tools. Use them actively:
+You have persistent memory across sessions via MemPalace MCP tools. Memories survive
+container restarts. Use them proactively — don't wait to be asked.
 
-- **mempalace_search**: Find what you've learned before. Search BEFORE starting work.
-- **mempalace_diary_write**: Save important findings, decisions, gotchas as you work.
-- **mempalace_kg_add**: Record relationships between entities (projects, tools, people).
-- **mempalace_add_drawer**: Store detailed content for later retrieval.
+### When to READ memory
+- At the START of every session: search for relevant context before doing work.
+- When the user mentions a topic: search to see if you already know about it.
+- Before making decisions: check if past decisions or gotchas exist.
 
-When a Stop hook fires asking you to save to your memory system, use the mempalace
-diary and drawer tools to save key topics, decisions, and findings from the session.
+### When to WRITE memory
+- When you discover something important: gotchas, decisions, architecture findings.
+- When the user shares context: conventions, preferences, project structure.
+- When a Stop hook fires: save key topics, decisions, quotes using the tools below.
+- When a PreCompact hook fires: save EVERYTHING — context is about to be compressed.
 
-When a PreCompact hook fires, save EVERYTHING important — context is about to be compressed.
+### MCP Tools (use these, not CLI commands)
+
+**Read/Search:**
+- `mempalace_search` — find memories by query. Filter by wing/room for precision.
+- `mempalace_list_wings` — see what knowledge domains exist.
+- `mempalace_list_rooms` — see topics within a domain.
+
+**Write:**
+- `mempalace_add_drawer` — store a memory (facts, findings, summaries). Include source attribution.
+- `mempalace_diary_write` — agent diary entries (your observations, session notes). Use topic for categorization.
+
+**Knowledge Graph:**
+- `mempalace_kg_add` — record relationships: "vafi uses asyncio", "vtf provides task_board_api".
+- `mempalace_kg_query` — query relationships for an entity.
+- `mempalace_kg_timeline` — see how an entity's relationships changed over time.
+
+**Duplicates:**
+- `mempalace_check_duplicate` — check before adding to avoid redundant entries.
+
+### Auto-Save Hooks
+The Stop hook fires every 15 messages. The PreCompact hook fires before context compression.
+Both tell you to save — use `mempalace_add_drawer` and `mempalace_diary_write` to do so.
+Save key topics, decisions, code patterns, and verbatim quotes. Organize by wing and room.
 CLAUDEMD
 
 # --- glab (GitLab CLI) config ---
