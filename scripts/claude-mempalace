@@ -2,8 +2,8 @@
 # claude-mempalace — Claude Code with persistent MemPalace memory
 #
 # Auth (auto-detected):
-#   Default: mounts ~/.claude/.credentials.json for OAuth subscription
-#   z.ai:    set ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL env vars
+#   OAuth: reads ~/.claude/.credentials.json and passes content via env var
+#   z.ai:  set ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL env vars
 #
 # Usage:
 #   claude-mempalace                          # default palace, current dir
@@ -13,7 +13,7 @@
 #   claude-mempalace --delete <name>          # delete a palace volume
 set -euo pipefail
 
-IMAGE="${MEMPALACE_IMAGE:-harbor.viloforge.com/vafi/vafi-claude-mempalace:latest}"
+IMAGE="${MEMPALACE_IMAGE:-harbor.viloforge.com/vafi/vafi-developer:latest}"
 VOLUME_PREFIX="mempalace"
 
 # --- Subcommands ---
@@ -35,38 +35,47 @@ if [[ "${1:-}" == "--delete" ]]; then
     exit 0
 fi
 
-# --- Launch ---
+# --- Resolve workspace ---
 
 PALACE="${1:-default}"
 WORKDIR="${2:-.}"
+RESOLVED=$(realpath "$WORKDIR")
+
+# Guard: refuse to mount home directory directly
+if [ "$RESOLVED" = "$HOME" ]; then
+    echo "ERROR: refusing to mount home directory as workspace — use a subdirectory."
+    echo "  Example: claude-mempalace $PALACE ~/projects/myapp"
+    exit 1
+fi
+
+# --- Build docker args ---
 
 env_args=()
-mount_args=()
 
-# z.ai auth: pass env vars
+# z.ai auth
 if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
     env_args+=(-e "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN")
     [ -n "${ANTHROPIC_BASE_URL:-}" ] && env_args+=(-e "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL")
 fi
 
-# MediaWiki: pass env vars if set
+# OAuth auth: read credentials file and pass content as env var
+CREDS="${HOME}/.claude/.credentials.json"
+if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ] && [ -f "$CREDS" ]; then
+    env_args+=(-e "CLAUDE_CREDENTIALS=$(cat "$CREDS")")
+fi
+
+# MediaWiki
 for mw_var in MW_API_HOST MW_API_PATH MW_USE_HTTPS MW_BOT_USER MW_BOT_PASS; do
     eval "val=\${${mw_var}:-}"
     [ -n "$val" ] && env_args+=(-e "${mw_var}=${val}")
 done
 
-# OAuth auth: mount only the credentials file
-CREDS="${HOME}/.claude/.credentials.json"
-if [ -f "$CREDS" ]; then
-    mount_args+=(-v "${CREDS}:/home/agent/.claude-host-credentials.json:ro")
-fi
+# Auto-init
+[ -n "${MEMPALACE_AUTO_INIT:-}" ] && env_args+=(-e "MEMPALACE_AUTO_INIT=$MEMPALACE_AUTO_INIT")
 
 exec docker run -it --rm \
     --name "claude-mp-$$-$(date +%s)" \
-    "${mount_args[@]}" \
     "${env_args[@]}" \
     -v "${VOLUME_PREFIX}-${PALACE}:/home/agent/.mempalace" \
-    -v "$(realpath "$WORKDIR"):/workspace" \
-    --entrypoint /opt/mempalace/entrypoint-local.sh \
-    "$IMAGE" \
-    claude --dangerously-skip-permissions
+    -v "${RESOLVED}:/workspace" \
+    "$IMAGE"

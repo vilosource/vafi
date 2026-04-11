@@ -64,8 +64,11 @@ RUN ln -sf /usr/bin/batcat /usr/local/bin/bat 2>/dev/null || true \
 # ---------------------------------------------------------------------------
 # Local entrypoint (same as mempalace image)
 # ---------------------------------------------------------------------------
-# Entrypoint runs as root (copies mode-600 credentials), then drops to agent
+# Entrypoint runs as agent (no root needed — credentials passed via env var)
 COPY entrypoint-local.sh /opt/mempalace/entrypoint-local.sh
 RUN chmod +x /opt/mempalace/entrypoint-local.sh
 
+USER agent
 WORKDIR /workspace
+ENTRYPOINT ["/opt/mempalace/entrypoint-local.sh"]
+CMD ["claude", "--dangerously-skip-permissions"]

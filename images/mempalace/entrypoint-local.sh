@@ -1,29 +1,24 @@
 #!/bin/bash
-# Entrypoint for local and headless use.
+# Entrypoint for local and headless use. Runs as agent user (NO ROOT).
 #
 # Auth modes (auto-detected):
-#   z.ai:  ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL env vars
-#   OAuth: mount ~/.claude/.credentials.json → /home/agent/.claude-host-credentials.json:ro
-#
-# Mounts:
-#   credentials  → /home/agent/.claude-host-credentials.json:ro  (OAuth only)
-#   mempalace    → /home/agent/.mempalace
-#   workdir      → /workspace
+#   z.ai:    ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL env vars
+#   OAuth:   CLAUDE_CREDENTIALS env var (JSON content, set by wrapper)
+#   Neither: warning, no auth
 set -e
-
-AGENT_HOME=/home/agent
-mkdir -p "$AGENT_HOME/.claude"
 
 # --- Auth ---
 
 if [ -n "$ANTHROPIC_AUTH_TOKEN" ]; then
-    echo >&2 "[mempalace] Auth: z.ai (ANTHROPIC_AUTH_TOKEN)"
-elif [ -f "$AGENT_HOME/.claude-host-credentials.json" ]; then
-    cp "$AGENT_HOME/.claude-host-credentials.json" "$AGENT_HOME/.claude/.credentials.json"
-    chown agent:agent "$AGENT_HOME/.claude/.credentials.json"
-    echo >&2 "[mempalace] Auth: OAuth (.credentials.json)"
+    echo >&2 "[mempalace] Auth: z.ai"
+elif [ -n "$CLAUDE_CREDENTIALS" ]; then
+    mkdir -p ~/.claude
+    echo "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
+    chmod 600 ~/.claude/.credentials.json
+    unset CLAUDE_CREDENTIALS
+    echo >&2 "[mempalace] Auth: OAuth"
 else
-    echo >&2 "[mempalace] WARNING: No auth configured (no ANTHROPIC_AUTH_TOKEN, no .credentials.json)"
+    echo >&2 "[mempalace] WARNING: No auth configured"
 fi
 
 # --- Build minimal Claude Code config from scratch ---
@@ -31,7 +26,6 @@ fi
 python3 << 'PYEOF'
 import json, os
 
-# ~/.claude.json — minimal, no host state
 cfg = {
     "hasCompletedOnboarding": True,
     "autoUpdates": False,
@@ -50,41 +44,22 @@ cfg = {
     },
 }
 
-cfg_path = "/home/agent/.claude.json"
-with open(cfg_path, "w") as f:
+with open(os.path.expanduser("~/.claude.json"), "w") as f:
     json.dump(cfg, f, indent=2)
-os.chown(cfg_path, 1001, 1001)
 
-# ~/.claude/settings.json — permissions only
 settings = {"skipDangerousModePermissionPrompt": True}
-settings_path = "/home/agent/.claude/settings.json"
-with open(settings_path, "w") as f:
+os.makedirs(os.path.expanduser("~/.claude"), exist_ok=True)
+with open(os.path.expanduser("~/.claude/settings.json"), "w") as f:
     json.dump(settings, f, indent=2)
-os.chown(settings_path, 1001, 1001)
 PYEOF
 
 # --- Ensure writable dirs for Claude Code runtime ---
 
 for d in session-env projects plans history cache; do
-    mkdir -p "$AGENT_HOME/.claude/$d"
-    chown agent:agent "$AGENT_HOME/.claude/$d"
+    mkdir -p ~/.claude/$d
 done
 
 # --- Launch ---
 
-# Ensure /workspace exists (but never chown — it's a bind mount from the host)
-mkdir -p /workspace
-
-# Pass z.ai env vars through to the agent user's environment
-EXPORT_VARS=""
-[ -n "$ANTHROPIC_AUTH_TOKEN" ] && EXPORT_VARS="export ANTHROPIC_AUTH_TOKEN='$ANTHROPIC_AUTH_TOKEN'; "
-[ -n "$ANTHROPIC_BASE_URL" ] && EXPORT_VARS="${EXPORT_VARS}export ANTHROPIC_BASE_URL='$ANTHROPIC_BASE_URL'; "
-
-CMD="${EXPORT_VARS}cd /workspace"
-if [ $# -gt 0 ]; then
-    CMD="$CMD && exec $(printf '%q ' "$@")"
-else
-    CMD="$CMD && exec bash"
-fi
-
-exec su -s /bin/bash agent -c "$CMD"
+cd /workspace
+exec "$@"
