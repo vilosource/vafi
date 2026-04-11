@@ -72,8 +72,8 @@ done
 
 # --- Launch ---
 
+# Ensure /workspace exists (but never chown — it's a bind mount from the host)
 mkdir -p /workspace
-chown agent:agent /workspace
 
 # Pass z.ai env vars through to the agent user's environment
 EXPORT_VARS=""

@@ -85,10 +85,17 @@ for d in session-env projects plans history cache; do
     chown agent:agent "$AGENT_HOME/.claude/$d"
 done
 
+# --- Auto-init empty palace ---
+
+if [ ! -d "$AGENT_HOME/.mempalace/palace" ] && [ "${MEMPALACE_AUTO_INIT:-false}" = "true" ]; then
+    echo >&2 "[mempalace] Auto-initializing empty palace"
+    su -s /bin/bash agent -c "mempalace init /workspace --yes 2>/dev/null || true"
+fi
+
 # --- Launch ---
 
+# Ensure /workspace exists (but never chown — it's a bind mount from the host)
 mkdir -p /workspace
-chown agent:agent /workspace
 
 # Pass env vars through to the agent user's environment
 EXPORT_VARS=""
