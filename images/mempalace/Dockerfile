@@ -15,6 +15,8 @@ USER root
 COPY entrypoint-local.sh /opt/mempalace/entrypoint-local.sh
 RUN chmod +x /opt/mempalace/entrypoint-local.sh
 
+RUN chmod 777 /home/agent
+
 USER agent
 WORKDIR /workspace
 ENTRYPOINT ["/opt/mempalace/entrypoint-local.sh"]
