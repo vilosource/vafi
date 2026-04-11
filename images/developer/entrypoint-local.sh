@@ -69,7 +69,33 @@ cfg["projects"] = {
 with open(os.path.expanduser("~/.claude.json"), "w") as f:
     json.dump(cfg, f, indent=2)
 
-settings = {"skipDangerousModePermissionPrompt": True}
+settings = {
+    "skipDangerousModePermissionPrompt": True,
+    "hooks": {
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "mempalace hook run --hook stop --harness claude-code"
+                    }
+                ]
+            }
+        ],
+        "PreCompact": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "mempalace hook run --hook precompact --harness claude-code"
+                    }
+                ]
+            }
+        ],
+    },
+}
 os.makedirs(os.path.expanduser("~/.claude"), exist_ok=True)
 with open(os.path.expanduser("~/.claude/settings.json"), "w") as f:
     json.dump(settings, f, indent=2)
