@@ -2,7 +2,7 @@
 # claude-mempalace — Claude Code with persistent MemPalace memory
 #
 # Auth (auto-detected):
-#   Default: mounts host ~/.claude for OAuth subscription auth
+#   Default: mounts ~/.claude/.credentials.json for OAuth subscription
 #   z.ai:    set ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL env vars
 #
 # Usage:
@@ -40,21 +40,20 @@ fi
 PALACE="${1:-default}"
 WORKDIR="${2:-.}"
 
-# Build volume mounts and env args
-mount_args=()
 env_args=()
+mount_args=()
 
-# z.ai auth: pass env vars into container
+# z.ai auth: pass env vars
 if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
     env_args+=(-e "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN")
     [ -n "${ANTHROPIC_BASE_URL:-}" ] && env_args+=(-e "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL")
 fi
 
-# OAuth auth: mount host .claude dir (always mount — entrypoint decides what to use)
-mount_args+=(
-    -v "${HOME}/.claude:/home/agent/.claude-host:ro"
-    -v "${HOME}/.claude.json:/home/agent/.claude-host.json:ro"
-)
+# OAuth auth: mount only the credentials file
+CREDS="${HOME}/.claude/.credentials.json"
+if [ -f "$CREDS" ]; then
+    mount_args+=(-v "${CREDS}:/home/agent/.claude-host-credentials.json:ro")
+fi
 
 exec docker run -it --rm \
     --name "claude-mp-$$-$(date +%s)" \
