@@ -125,4 +125,5 @@ RUN az version --output tsv \
     && glab --version \
     && docker --version \
     && azcopy --version \
-    && echo "All tools verified"
+    && echo "All tools verified" \
+    && rm -rf ~/.config

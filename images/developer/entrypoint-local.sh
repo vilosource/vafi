@@ -81,6 +81,22 @@ for d in session-env projects plans history cache; do
     mkdir -p ~/.claude/$d
 done
 
+# --- glab (GitLab CLI) config ---
+
+if [ -n "$GITLAB_TOKEN" ]; then
+    mkdir -p ~/.config/glab-cli
+    cat > ~/.config/glab-cli/config.yml << GLEOF
+hosts:
+  ${GITLAB_HOST:-gitlab.optiscangroup.com}:
+    token: ${GITLAB_TOKEN}
+    api_host: ${GITLAB_HOST:-gitlab.optiscangroup.com}
+    api_protocol: https
+    git_protocol: ssh
+GLEOF
+    chmod 600 ~/.config/glab-cli/config.yml
+    echo >&2 "[developer] glab: configured for ${GITLAB_HOST:-gitlab.optiscangroup.com}"
+fi
+
 # --- Auto-init empty palace ---
 
 if [ ! -d ~/.mempalace/palace ] && [ "${MEMPALACE_AUTO_INIT:-false}" = "true" ]; then

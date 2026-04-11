@@ -64,6 +64,12 @@ if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ] && [ -f "$CREDS" ]; then
     env_args+=(-e "CLAUDE_CREDENTIALS=$(cat "$CREDS")")
 fi
 
+# GitLab
+for gl_var in GITLAB_TOKEN GITLAB_HOST; do
+    eval "val=\${${gl_var}:-}"
+    [ -n "$val" ] && env_args+=(-e "${gl_var}=${val}")
+done
+
 # MediaWiki
 for mw_var in MW_API_HOST MW_API_PATH MW_USE_HTTPS MW_BOT_USER MW_BOT_PASS; do
     eval "val=\${${mw_var}:-}"
