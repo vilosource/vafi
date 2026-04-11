@@ -81,8 +81,6 @@ done
 
 exec docker run -it --rm \
     --name "claude-mp-$$-$(date +%s)" \
-    --user "$(id -u):$(id -g)" \
-    -e "HOME=/home/agent" \
     "${env_args[@]}" \
     -v "${VOLUME_PREFIX}-${PALACE}:/home/agent/.mempalace" \
     -v "${RESOLVED}:/workspace" \
