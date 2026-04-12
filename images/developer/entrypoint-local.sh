@@ -28,7 +28,7 @@ else
     echo >&2 "[developer] WARNING: No auth configured"
 fi
 
-# --- Merge MCP servers and project trust into Claude Code config ---
+# --- Merge Claude Code config (preserve runtime state) ---
 
 python3 << 'PYEOF'
 import json, os
@@ -45,38 +45,6 @@ if os.path.exists(config_path):
 cfg.setdefault("hasCompletedOnboarding", True)
 cfg.setdefault("autoUpdates", False)
 
-# MCP servers: rebuild every start to reflect current env vars
-mcp = {
-    "mempalace": {
-        "command": "python3",
-        "args": ["-m", "mempalace.mcp_server"]
-    }
-}
-
-# MediaWiki MCP (registered when MW_API_HOST is set)
-mw_host = os.environ.get("MW_API_HOST", "")
-if mw_host:
-    mw_env = {}
-    for key in ("MW_API_HOST", "MW_API_PATH", "MW_USE_HTTPS", "MW_BOT_USER", "MW_BOT_PASS"):
-        val = os.environ.get(key, "")
-        if val:
-            mw_env[key] = val
-    mcp["mediawiki"] = {
-        "command": "mcp-mediawiki",
-        "args": ["--transport", "stdio"],
-        "env": mw_env,
-    }
-
-# Playwright MCP (remote SSE server)
-playwright_url = os.environ.get("PLAYWRIGHT_MCP_URL", "http://host.docker.internal:8931/sse")
-if playwright_url:
-    mcp["playwright"] = {
-        "type": "sse",
-        "url": playwright_url,
-    }
-
-cfg["mcpServers"] = mcp
-
 # Project trust
 cfg.setdefault("projects", {})
 cfg["projects"]["/workspace"] = {
@@ -86,6 +54,33 @@ cfg["projects"]["/workspace"] = {
 
 with open(config_path, "w") as f:
     json.dump(cfg, f, indent=2)
+PYEOF
+
+# --- Register MCP servers via claude CLI (idempotent) ---
+
+# Always register mempalace
+claude mcp add mempalace -- python3 -m mempalace.mcp_server 2>/dev/null
+
+# MediaWiki MCP (registered when MW_API_HOST is set)
+if [ -n "$MW_API_HOST" ]; then
+    claude mcp add -e MW_API_HOST="$MW_API_HOST" \
+        ${MW_API_PATH:+-e MW_API_PATH="$MW_API_PATH"} \
+        ${MW_USE_HTTPS:+-e MW_USE_HTTPS="$MW_USE_HTTPS"} \
+        ${MW_BOT_USER:+-e MW_BOT_USER="$MW_BOT_USER"} \
+        ${MW_BOT_PASS:+-e MW_BOT_PASS="$MW_BOT_PASS"} \
+        mediawiki -- mcp-mediawiki --transport stdio 2>/dev/null
+fi
+
+# Playwright MCP (remote streamable HTTP server)
+PLAYWRIGHT_MCP_URL="${PLAYWRIGHT_MCP_URL:-http://playwright-mcp:8931/mcp}"
+if [ -n "$PLAYWRIGHT_MCP_URL" ]; then
+    claude mcp add --transport http playwright "$PLAYWRIGHT_MCP_URL" 2>/dev/null
+fi
+
+# --- Write settings.json (hooks, permissions) ---
+
+python3 << 'PYEOF'
+import json, os
 
 settings = {
     "skipDangerousModePermissionPrompt": True,

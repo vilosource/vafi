@@ -5,4 +5,11 @@ services:
     restart: unless-stopped
     ports:
       - "8931:8931"
-    command: ["--port", "8931", "--host", "0.0.0.0", "--headless", "--no-sandbox"]
+    command: ["--port", "8931", "--host", "0.0.0.0", "--headless", "--no-sandbox", "--allowed-hosts", "playwright-mcp:8931,localhost"]
+    networks:
+      - vafi-mcp
+
+networks:
+  vafi-mcp:
+    name: vafi-mcp
+    driver: bridge

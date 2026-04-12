@@ -83,8 +83,15 @@ done
 # Auto-init
 [ -n "${MEMPALACE_AUTO_INIT:-}" ] && env_args+=(-e "MEMPALACE_AUTO_INIT=$MEMPALACE_AUTO_INIT")
 
+# Join shared MCP network if it exists
+net_args=()
+if docker network inspect vafi-mcp &>/dev/null; then
+    net_args+=(--network vafi-mcp)
+fi
+
 exec docker run -it --rm \
     --name "claude-mp-$$-$(date +%s)" \
+    "${net_args[@]}" \
     "${env_args[@]}" \
     -v "${VOLUME_PREFIX}-${PALACE}-home:/home/agent" \
     -v "${RESOLVED}:/workspace" \
