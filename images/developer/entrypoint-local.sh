@@ -63,12 +63,13 @@ claude mcp add mempalace -- python3 -m mempalace.mcp_server 2>/dev/null
 
 # MediaWiki MCP (registered when MW_API_HOST is set)
 if [ -n "$MW_API_HOST" ]; then
-    claude mcp add -e MW_API_HOST="$MW_API_HOST" \
-        ${MW_API_PATH:+-e MW_API_PATH="$MW_API_PATH"} \
-        ${MW_USE_HTTPS:+-e MW_USE_HTTPS="$MW_USE_HTTPS"} \
-        ${MW_BOT_USER:+-e MW_BOT_USER="$MW_BOT_USER"} \
-        ${MW_BOT_PASS:+-e MW_BOT_PASS="$MW_BOT_PASS"} \
-        mediawiki -- mcp-mediawiki --transport stdio 2>/dev/null
+    mw_args=()
+    [ -n "$MW_API_HOST" ]  && mw_args+=(-e "MW_API_HOST=$MW_API_HOST")
+    [ -n "$MW_API_PATH" ]  && mw_args+=(-e "MW_API_PATH=$MW_API_PATH")
+    [ -n "$MW_USE_HTTPS" ] && mw_args+=(-e "MW_USE_HTTPS=$MW_USE_HTTPS")
+    [ -n "$MW_BOT_USER" ]  && mw_args+=(-e "MW_BOT_USER=$MW_BOT_USER")
+    [ -n "$MW_BOT_PASS" ]  && mw_args+=(-e "MW_BOT_PASS=$MW_BOT_PASS")
+    claude mcp add mediawiki "${mw_args[@]}" -- mcp-mediawiki --transport stdio 2>/dev/null
 fi
 
 # Playwright MCP (remote streamable HTTP server)
