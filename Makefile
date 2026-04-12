@@ -53,3 +53,17 @@ helm-template: ## Render chart with default values
 
 helm-lint: ## Validate chart
 	helm lint charts/vafi/
+
+# --- Shared MCP Servers ---
+
+mcp-up: ## Start shared MCP servers (playwright)
+	docker compose -f mcp-servers/playwright/docker-compose.yml up -d
+
+mcp-down: ## Stop shared MCP servers
+	docker compose -f mcp-servers/playwright/docker-compose.yml down
+
+mcp-status: ## Show shared MCP server status
+	docker compose -f mcp-servers/playwright/docker-compose.yml ps
+
+mcp-logs: ## Tail shared MCP server logs
+	docker compose -f mcp-servers/playwright/docker-compose.yml logs -f

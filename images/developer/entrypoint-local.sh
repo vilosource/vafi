@@ -28,21 +28,29 @@ else
     echo >&2 "[developer] WARNING: No auth configured"
 fi
 
-# --- Build minimal Claude Code config from scratch ---
+# --- Merge MCP servers and project trust into Claude Code config ---
 
 python3 << 'PYEOF'
 import json, os
 
-cfg = {
-    "hasCompletedOnboarding": True,
-    "autoUpdates": False,
-    "installMethod": "npm",
-    "mcpServers": {
-        "mempalace": {
-            "command": "python3",
-            "args": ["-m", "mempalace.mcp_server"]
-        }
-    },
+config_path = os.path.expanduser("~/.claude.json")
+
+# Load existing config if present (preserves Claude Code runtime state)
+cfg = {}
+if os.path.exists(config_path):
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+# Ensure required keys (only set if missing — don't overwrite Claude's own values)
+cfg.setdefault("hasCompletedOnboarding", True)
+cfg.setdefault("autoUpdates", False)
+
+# MCP servers: rebuild every start to reflect current env vars
+mcp = {
+    "mempalace": {
+        "command": "python3",
+        "args": ["-m", "mempalace.mcp_server"]
+    }
 }
 
 # MediaWiki MCP (registered when MW_API_HOST is set)
@@ -53,20 +61,30 @@ if mw_host:
         val = os.environ.get(key, "")
         if val:
             mw_env[key] = val
-    cfg["mcpServers"]["mediawiki"] = {
+    mcp["mediawiki"] = {
         "command": "mcp-mediawiki",
         "args": ["--transport", "stdio"],
         "env": mw_env,
     }
 
-cfg["projects"] = {
-    "/workspace": {
-        "hasTrustDialogAccepted": True,
-        "hasCompletedProjectOnboarding": True,
+# Playwright MCP (remote SSE server)
+playwright_url = os.environ.get("PLAYWRIGHT_MCP_URL", "http://host.docker.internal:8931/sse")
+if playwright_url:
+    mcp["playwright"] = {
+        "type": "sse",
+        "url": playwright_url,
     }
+
+cfg["mcpServers"] = mcp
+
+# Project trust
+cfg.setdefault("projects", {})
+cfg["projects"]["/workspace"] = {
+    "hasTrustDialogAccepted": True,
+    "hasCompletedProjectOnboarding": True,
 }
 
-with open(os.path.expanduser("~/.claude.json"), "w") as f:
+with open(config_path, "w") as f:
     json.dump(cfg, f, indent=2)
 
 settings = {

@@ -77,6 +77,9 @@ for mw_var in MW_API_HOST MW_API_PATH MW_USE_HTTPS MW_BOT_USER MW_BOT_PASS; do
     [ -n "$val" ] && env_args+=(-e "${mw_var}=${val}")
 done
 
+# Playwright MCP
+[ -n "${PLAYWRIGHT_MCP_URL:-}" ] && env_args+=(-e "PLAYWRIGHT_MCP_URL=${PLAYWRIGHT_MCP_URL}")
+
 # Auto-init
 [ -n "${MEMPALACE_AUTO_INIT:-}" ] && env_args+=(-e "MEMPALACE_AUTO_INIT=$MEMPALACE_AUTO_INIT")
 

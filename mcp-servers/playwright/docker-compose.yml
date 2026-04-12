@@ -1,0 +1,8 @@
+services:
+  playwright-mcp:
+    image: mcr.microsoft.com/playwright/mcp
+    container_name: playwright-mcp
+    restart: unless-stopped
+    ports:
+      - "8931:8931"
+    command: ["--port", "8931", "--host", "0.0.0.0", "--headless", "--no-sandbox"]
