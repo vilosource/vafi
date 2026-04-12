@@ -39,7 +39,8 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
         > /etc/apt/sources.list.d/hashicorp.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends terraform vault \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && setcap -r /usr/bin/vault
 
 # ---------------------------------------------------------------------------
 # Ansible
