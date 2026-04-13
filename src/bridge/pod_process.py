@@ -92,26 +92,22 @@ class PodProcessManager:
     ) -> list[str]:
         """Build Pi exec command for a locked session.
 
-        Wraps Pi in a bash command that first writes models.json
-        (needed for z.ai proxy base URL) then starts Pi in RPC mode.
+        Sources init.sh for config (models.json, MCP), then starts Pi
+        in RPC mode. init.sh is provided by the harness image at
+        /opt/vf-harness/init.sh.
         """
+        pi_args = "--mode rpc"
         session_dir = f"/sessions/{_sanitize_k8s_name(project)}/"
-        pi_args = f"--mode rpc --session-dir {session_dir} --provider {provider} --model {model}"
+        pi_args += f" --session-dir {session_dir} --provider {provider} --model {model}"
         if methodology:
             pi_args += f" --append-system-prompt {methodology}"
         if thinking_level:
             pi_args += f" --thinking {thinking_level}"
 
-        # Write models.json via heredoc (with variable expansion), then start Pi
-        setup_script = (
-            f'mkdir -p ~/.pi/agent && '
-            f'cat > ~/.pi/agent/models.json << PIEOF\n'
-            f'{{"providers": {{"anthropic": {{"baseUrl": "$ANTHROPIC_BASE_URL", "api": "anthropic-messages", "apiKey": "ANTHROPIC_API_KEY", "models": [{{"id": "{model}"}}]}}}}}}\n'
-            f'PIEOF\n'
-            f'exec pi {pi_args}'
-        )
-
-        return ["bash", "-c", setup_script]
+        return [
+            "bash", "-c",
+            f"source /opt/vf-harness/init.sh && exec pi {pi_args}",
+        ]
 
     async def create_or_get_pod(self, spec: dict[str, Any]) -> str:
         """Create pod if it doesn't exist, return pod name.
@@ -169,7 +165,7 @@ class PodProcessManager:
             pod_name,
             self.namespace,
             command=command,
-            container="pi-agent",
+            container="agent",
             stdin=True,
             stdout=True,
             stderr=True,
