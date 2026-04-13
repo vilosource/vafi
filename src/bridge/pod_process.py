@@ -198,7 +198,12 @@ class PodExecConnection:
     _buffer: str = ""
 
     async def read_stdout(self) -> bytes:
-        """Read a line from stdout. Handles k8s exec binary framing."""
+        """Read a line from stdout. Handles k8s exec binary framing.
+
+        The k8s v4 exec protocol can send either BINARY or TEXT frames
+        depending on the server version. Both use the same channel prefix:
+        first byte/char is the channel number (0=stdin, 1=stdout, 2=stderr).
+        """
         import aiohttp
 
         while True:
@@ -216,6 +221,13 @@ class PodExecConnection:
                     if channel == 1:  # stdout
                         self._buffer += payload.decode("utf-8", errors="replace")
                     # Skip stderr (channel 2) and others
+            elif msg.type == aiohttp.WSMsgType.TEXT:
+                # v4 protocol may send TEXT frames with channel as first char
+                if len(msg.data) >= 2:
+                    channel = ord(msg.data[0])
+                    payload = msg.data[1:]
+                    if channel == 1:  # stdout
+                        self._buffer += payload
             elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                 return b""
 
