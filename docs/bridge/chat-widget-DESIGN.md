@@ -381,14 +381,77 @@ const totalMargin = (consoleDocked ? consoleDockWidth : 0) + (chatDocked ? chatD
 <main style={{ marginRight: totalMargin }}>
 ```
 
+## Session Continuity
+
+### Where conversation data lives
+
+| Location | What's stored | Implemented? | Survives process death? |
+|----------|-------------|-------------|----------------------|
+| **Pi in-process memory** | Full conversation (all turns, tool results, thinking) | Yes — this is how Pi works | No |
+| **cxdb** | Full conversation as a DAG of turns: `user_input` (with text), `assistant_turn` (with tool_calls and text), `tool_result` (with content and call_id) | Yes — cxdb is deployed, `src/cxdb/` package exists, cxdb MCP server running in vafi-dev | Yes |
+| **vtf SessionRecords** | Metadata: who, when, project, role, cxdb_context_id | Yes — bridge writes via `session_recorder.py` | Yes |
+| **Browser localStorage** | Display messages (what user sees in the widget) | To be built | Yes (on that browser only) |
+
+cxdb is the source of truth for conversation history. It is designed for this purpose — from the cxdb integration design: *"cxdb stores the full conversation history of every agent session — an immutable DAG of every API call, tool use, decision, and outcome."*
+
+### Session end scenarios
+
+**1. User closes widget, keeps lock alive ("Keep alive")**
+- Pi process stays running in the pod, lock stays in vtf
+- User reopens widget → `GET /v1/locks` finds their lock → reconnects to same Pi process
+- Pi has full conversation context in memory — no data loss
+- Works until idle timeout (4 hours, configurable via `LOCKED_IDLE_TIMEOUT_SECONDS`)
+
+**2. User releases the lock ("Release")**
+- Pi gets `shutdown` command, process exits
+- Lock deleted from vtf, SessionRecord finalized with `cxdb_context_id`
+- cxdb retains the full conversation trace
+
+**3. Idle timeout fires (no activity for 4 hours)**
+- Same as release — Pi shutdown, lock deleted, SessionRecord finalized
+
+**4. Pod eviction / crash / bridge restart**
+- Pi process dies, in-memory context lost
+- Bridge recovery on restart: queries vtf for active locks, checks if pod exists. If pod exists and is running, opens new exec to it (but Pi process is gone). If pod is gone, releases stale lock.
+- cxdb retains the full conversation trace from before the crash
+
+### Resuming a previous conversation
+
+When a user starts a new session after a previous one ended, the bridge can load prior context from cxdb. The infrastructure for this exists:
+
+**What is implemented today:**
+- The bridge records `cxdb_context_id` in vtf SessionRecords after each prompt (`session_recorder.py`)
+- The cxdb MCP server (deployed at `cxdb-mcp` in vafi-dev) provides 4 tools: `cxdb_session_summary`, `cxdb_session_breadcrumbs`, `cxdb_get_turns`, `cxdb_list_sessions`
+- The `src/cxdb/` package provides: `CxdbClient` (async HTTP), `parse_turns()`, `extract_tool_events()`, `extract_structured()` (summary extraction)
+- Pi agents already have cxdb MCP access — the bridge injects `VF_CXDB_MCP_URL` into Pi's environment
+
+**What is designed but not yet wired for the chat widget:**
+- On new session for a project where a prior session exists:
+  1. Bridge queries vtf SessionRecords for the last session's `cxdb_context_id`
+  2. Bridge calls `src/cxdb/` to build a context summary (tiered loading from cxdb integration design):
+     - **Tier 1 (~800 tokens):** Structured summary — what was discussed, what was decided, key files touched
+     - **Tier 2 (~3K tokens):** Breadcrumbs — step-by-step tool-use timeline
+     - **Tier 3 (variable):** Selective turns — specific parts of the conversation on demand
+  3. Bridge injects the summary into Pi's session via `--append-system-prompt` with a preamble: "This is a continuation of a previous session. Here is what was discussed:"
+  4. Pi starts with prior context — the agent knows what happened before
+
+**What the user sees:**
+- Chat widget queries vtf for prior sessions on this project
+- If prior session exists: loads display history from cxdb turns (user messages + assistant responses)
+- Messages rendered in the widget so the user can scroll back and see the previous conversation
+- New messages append below
+
+**Unverified assumptions:**
+- `assistant_turn.text` population in interactive sessions: All cxdb spike data (spike0 report) was from executor sessions where `turn.text` was often empty. Interactive architect sessions via the bridge may behave differently since the prompt flow is different. This needs verification by running a chat session through the bridge and inspecting the cxdb turns.
+- Pi `--session-dir` resume: Whether Pi can resume from its own JSONL session files after process restart has never been tested (spike S3 in the bridge design doc). If this works, it provides a simpler resume path for cases where the same pod is reused. This is a separate concern from cxdb-based resume — the two are complementary.
+
 ## What This Does NOT Cover
 
 - **Slack adapter** — separate Phase C item, different design
 - **Mobile app** — direct HTTP client, no vtf web component needed
-- **Conversation history API** — v1 uses localStorage; server-side history is v2
-- **Multiple simultaneous chats** — v1 is one chat per project; multi-chat is v2
-- **File uploads / image attachments** — v2
-- **Voice input** — v2
+- **Multiple simultaneous chats** — one chat per project; multi-chat requires UX design
+- **File uploads / image attachments** — not in scope
+- **Voice input** — not in scope
 
 ## Implementation Sequence
 
@@ -401,6 +464,8 @@ const totalMargin = (consoleDocked ? consoleDockWidth : 0) + (chatDocked ? chatD
 | 5 | Streaming integration (NDJSON → messages) | Phase 4 |
 | 6 | Polish: tool indicators, markdown, auto-scroll, beforeunload | Phase 5 |
 | 7 | Integration: buttons in project pages, App.tsx mount | Phase 6 |
+| 8 | Session continuity: load prior session from cxdb on new lock acquire | Phase 7 |
+| 9 | Display history: render prior conversation from cxdb turns in widget | Phase 8 |
 
 ### Definition of Done
 
@@ -410,5 +475,7 @@ A user on a vtf project page can:
 3. See tool use indicators when agent runs bash/edit/read
 4. Send follow-up messages with full conversation context
 5. Close widget → prompted to release or keep alive
-6. Reopen widget → reconnects to existing session
+6. Reopen widget → reconnects to existing session (if lock still alive)
 7. Refresh page → messages restored from localStorage, session still alive
+8. Start a new session after release → agent has context from the previous session via cxdb
+9. See previous conversation messages rendered in the widget from cxdb history
