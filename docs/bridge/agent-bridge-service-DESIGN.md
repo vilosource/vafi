@@ -1,12 +1,166 @@
 # Agent Bridge Service — Design
 
-**Status:** Ready for implementation (all blockers resolved 2026-04-02)
+**Status:** Implemented (Phase A + B deployed to vafi-dev, 2026-04-02)
 **Date:** 2026-04-01
-**Last Updated:** 2026-04-02 (all blockers resolved)
+**Last Updated:** 2026-04-13 (status update — Phase A+B complete, all blockers resolved)
 **Prerequisites:**
 - agent-as-a-service-harness-REPORT.md (Pi RPC verified as persistent harness)
 - agent-session-routing-RESEARCH.md (two session patterns: locked/ephemeral)
-- vtf-user-management-DESIGN.md (identity models — implemented, vtf commit 9300560)
+- vtf-user-management-DESIGN.md (identity models — implemented, commit 9300560)
+
+## Start Here
+
+### What this is
+
+The bridge decouples vafi agents from terminal-only access. Instead of remoting into a pod via vafi-console (xterm.js + kubectl exec), any client — Slack, mobile, web widget, webhook — can send prompts via HTTP and get streamed responses. Two session modes: **ephemeral** (stateless, one prompt per process) and **locked** (persistent Pi process with full conversation context across turns).
+
+### Reading order
+
+Read these docs in this order. Each builds on the previous.
+
+| # | Doc | What you'll learn |
+|---|-----|-------------------|
+| 1 | [agent-as-a-service-harness-REPORT.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/agent-as-a-service-harness-REPORT.md) | Why Pi RPC was chosen over Claude Code CLI. Pi's `--mode rpc` provides a persistent process with JSONL stdin/stdout — zero restart overhead. Claude Code has no equivalent. |
+| 2 | [agent-session-routing-RESEARCH.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/agent-session-routing-RESEARCH.md) | The two session patterns (locked vs ephemeral), identity resolution, and how routing works. |
+| 3 | **This doc** (agent-bridge-service-DESIGN.md) | Architecture, API, process model, deployment. The canonical design reference. |
+| 4 | [agent-bridge-IMPLEMENTATION-PLAN.md](agent-bridge-IMPLEMENTATION-PLAN.md) | Original 10-phase TDD plan with acceptance criteria. Useful for understanding intent behind each component. |
+| 5 | [agent-bridge-REWORK-PLAN.md](agent-bridge-REWORK-PLAN.md) | 18 deviations found after initial implementation. Documents what went wrong and how it was corrected. Read this to understand why certain things are built the way they are (e.g., `--mode rpc` instead of `--mode json`, background reader task). |
+
+**Spike PoCs** (optional, in [viloforge-research](https://github.com/vilosource/viloforge-research/tree/develop/viloforge) repo):
+- [claude-code-rpc-bridge-RESEARCH.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/claude-code-rpc-bridge-RESEARCH.md) — initial RPC bridge research
+- [claude-code-rpc-bridge-SPIKE.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/claude-code-rpc-bridge-SPIKE.md) — Claude Code spike results
+- [spikes/rpc-bridge/bridge_pi.py](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/spikes/rpc-bridge/bridge_pi.py) — Pi bridge PoC (the code that proved the pattern)
+- [spikes/rpc-bridge/bridge.py](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/spikes/rpc-bridge/bridge.py) — Claude Code bridge PoC
+
+### Source code
+
+| Repo | Path | What |
+|------|------|------|
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `src/bridge/` | Bridge service source code |
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `images/pi/` | Pi harness image (Dockerfile, init.sh, connect.sh, run.sh) |
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `images/claude/` | Claude harness image |
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `images/bridge/` | Bridge Dockerfile |
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `config/` | harnesses.yaml, roles.yaml, infra.yaml (shared ConfigMap) |
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `tests/bridge/` | Unit tests |
+| [vilosource/vafi](https://github.com/vilosource/vafi) | `tests/bridge/e2e/` | E2E tests (run against deployed bridge in vafi-dev) |
+| [vilosource/vafi-console](https://github.com/vilosource/vafi-console) | `src/vafi_console/pods/spec_builder.py` | PodSpecBuilder — config-driven pod specs (bridge uses same pattern) |
+| [vilosource/viloforge-research](https://github.com/vilosource/viloforge-research) | `viloforge/` | Research docs (harness report, session routing, spike reports) |
+| [vilosource/viloforge-research](https://github.com/vilosource/viloforge-research) | `viloforge/spikes/rpc-bridge/` | Spike PoC code |
+
+### Key source files (read in this order)
+
+| File | What it does |
+|------|-------------|
+| `src/bridge/app.py` | FastAPI app setup, startup hooks (recovery on restart), background tasks (idle timeout, health monitor) |
+| `src/bridge/auth.py` | Auth middleware — validates vtf token via `GET /v1/auth/validate/`, extracts user identity |
+| `src/bridge/roles.py` | Loads roles.yaml — session_type (locked/ephemeral), default harness, methodology, model config |
+| `src/bridge/endpoints.py` | `/v1/prompt`, `/v1/prompt/stream`, `/v1/lock`, `/v1/health`, `/v1/sessions` — the HTTP API |
+| `src/bridge/pi_session.py` | Ephemeral Pi process manager — spawns `pi --mode rpc --no-session`, sends JSONL prompt, collects `agent_end`, terminates |
+| `src/bridge/pi_events.py` | JSONL event parser — translates Pi's stdout events into typed Python objects |
+| `src/bridge/lock_manager.py` | Lock lifecycle — acquire (POST /v1/locks/ to vtf), release (DELETE), contention (409), reconnect |
+| `src/bridge/pod_process.py` | Locked session manager — creates pods via kubernetes_asyncio, opens kubectl exec, relays JSONL through WebSocket. **Contains the background reader task** (see below). |
+
+### The background reader task (key engineering decision)
+
+This is the hardest problem in the bridge and the most important thing to understand before reading `pod_process.py`.
+
+**The problem:** Locked sessions route prompts to a persistent Pi process inside a pod via kubectl exec. The kubectl exec connection is a WebSocket. Between HTTP requests (user sends prompt 1, waits 5 minutes, sends prompt 2), the WebSocket must stay alive. Without something actively reading stdout, the WebSocket connection drops.
+
+**The solution:** Each `ManagedProcess` has a `reader_task` — an `asyncio.Task` that runs continuously, reading Pi's stdout line by line from the kubectl exec WebSocket. Parsed events go into a `response_queue` (`asyncio.Queue`). When a prompt endpoint needs a response, it writes to stdin and then awaits events from the queue. An `asyncio.Lock` serializes prompt access so two concurrent requests don't interleave.
+
+```
+HTTP request 1                              kubectl exec WebSocket
+    │                                            │
+    ├── write prompt to stdin ──────────────────>│──> Pi process
+    │                                            │
+    │   reader_task (always running) <───────────│<── Pi stdout (JSONL events)
+    │       │                                    │
+    │       └── puts events on response_queue    │
+    │                                            │
+    ├── await response_queue.get() ──> agent_end │
+    │                                            │
+    ... minutes pass ...                         │  (reader_task keeps WebSocket alive)
+    │                                            │
+HTTP request 2                                   │
+    ├── write prompt to stdin ──────────────────>│──> Pi process
+    ├── await response_queue.get() ──> agent_end │
+```
+
+Without the reader task, the WebSocket drops silently between requests. This was discovered during Phase B implementation and is documented in the rework plan.
+
+### Deployed service
+
+| | |
+|---|---|
+| **URL** | `https://bridge.dev.viloforge.com` |
+| **Namespace** | `vafi-dev` |
+| **Deployment** | `vafi-bridge` |
+| **Image** | `harbor.viloforge.com/vafi/vafi-bridge:<commit-hash>` |
+| **Config** | Shared ConfigMap `vafi-config` mounted at `/app/config/` |
+
+### Running locally
+
+```bash
+# Clone the repo
+git clone git@github.com:vilosource/vafi.git && cd vafi
+
+# Install bridge dependencies
+pip install -e ".[bridge]"
+
+# Required env vars (see config section below for full list)
+export VTF_API_URL=http://vtf-api.vtf-dev.svc.cluster.local:8000
+export VTF_API_TOKEN=<service-token>
+export VTF_MCP_URL=http://vtf-mcp.vtf-dev.svc.cluster.local:8002/mcp
+export CXDB_MCP_URL=http://vafi-cxdb.vafi-dev.svc.cluster.local:9010
+export ROLES_CONFIG=config/roles.yaml
+
+# Run the bridge
+uvicorn bridge.app:app --port 8080
+
+# Run unit tests
+pytest tests/bridge/ -v
+
+# Run E2E tests (requires deployed bridge + vtf-dev access)
+BRIDGE_URL=https://bridge.dev.viloforge.com pytest tests/bridge/e2e/ -v
+```
+
+### How the bridge relates to other vafi services
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ External clients (Slack, mobile, web widget, webhook)        │
+│                              │                               │
+│                              ▼                               │
+│                    vafi-bridge (this service)                 │
+│                    Handles: chat/prompt sessions              │
+│                              │                               │
+│              ┌───────────────┼───────────────┐               │
+│              │               │               │               │
+│              ▼               ▼               ▼               │
+│         vtf API         Pi agents       cxdb                 │
+│     (auth, locks,    (ephemeral or    (trace storage)        │
+│      sessions)        in pods)                               │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ vafi-console (separate service, coexists with bridge)        │
+│ Handles: terminal sessions (xterm.js + kubectl exec)         │
+│ Same pods, same auth, different interface                    │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ vafi controller (separate service, no bridge interaction)     │
+│ Handles: autonomous task execution (executor/judge agents)   │
+│ Uses run.sh directly, not the bridge API                     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **Bridge vs console:** Coexistence. Console serves terminals, bridge serves chat. Both authenticate via vtf, both can interact with the same project pods. vtf web UI offers both "Open Terminal" (console) and "Chat with Architect" (bridge).
+- **Bridge vs controller:** No interaction. Controller manages autonomous agents (executor, judge) via the controller loop. Bridge manages human-facing agents (architect, assistant) via HTTP API. They share the harness boundary (same `run.sh`/`connect.sh` scripts, same config).
+- **Bridge → vtf:** Auth (token validation), locks (AgentLock CRUD), session recording (SessionRecord POST), sessions proxy (GET /v1/sessions).
+- **Bridge → cxdb:** Trace lookup (cxdb_context_id for session records).
+
+---
 
 ## Purpose
 
@@ -18,36 +172,40 @@ The bridge service is the central proxy between external channels (Slack, mobile
 4. Translating channel-specific formats into a common protocol
 5. Recording session invocations for cxdb traceability
 
-## Blockers — ALL RESOLVED
+## Blockers
 
-| Blocker | Description | Resolution | Date |
-|---------|-------------|------------|------|
-| B1: vtf user management | Token validation, ExternalIdentity, AgentLock, SessionRecord, ProjectMembership, service accounts | vtf commit `9300560`: all 6 phases implemented (73 tests, 1289 total). `GET /v1/auth/validate/`, ExternalIdentity, AgentLock, ChannelProjectMapping, ProjectMembership, HasProjectMembership permission, create_service_account command. | 2026-04-02 |
-| B2: vafi-pi agent image | Pi not in agent pods | `vafi-agent-pi` image built and deployed. Pi 0.59.0 + pi-mcp-adapter + cxtx. E2E verified: Pi executor claimed task, executed, passed gates, trace in cxdb. See [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md). | 2026-04-02 |
-| B3: Pi MCP server connectivity | Can Pi connect to HTTP MCP servers? | `pi-mcp-adapter` extension handles MCP via `~/.pi/agent/mcp.json`. Verified both stdio and HTTP/URL transports. Config: `{"mcpServers": {"vtf": {"url": "...", "lifecycle": "lazy"}}}`. | 2026-04-02 |
-| B4: Pi kubectl exec JSONL relay | Does JSONL survive k8s exec framing? | All tests passed: basic integrity, rapid burst (5 commands), large payloads (up to 64KB), session consistency. No line splitting, merging, or corruption. | 2026-04-02 |
+These must be resolved before the bridge can be deployed. Each is a separate workstream.
 
-## Assumptions — Status
+| Blocker | Description | Workstream | Status |
+|---------|-------------|------------|--------|
+| B1: vtf user management | Token validation, ExternalIdentity, AgentLock, SessionRecord models | vtf-user-management-DESIGN.md (Phases 1-3) | **RESOLVED** — commit 9300560, 6 phases, 73 tests |
+| B2: vafi-pi agent image | Pi agent image with auth config | vafi-pi-image-DESIGN.md | **RESOLVED** — vafi-agent-pi deployed, E2E passed |
+| B3: Pi MCP server connectivity | Pi `--mode rpc` connecting to HTTP MCP servers | Spike S1 (pi-mcp-adapter) | **RESOLVED** — pi-mcp-adapter verified, HTTP transport works |
+| B4: Pi via kubectl exec relay | Pi JSONL protocol surviving k8s exec WebSocket framing | Spike S2 | **RESOLVED** — all integrity tests passed (basic, burst, 64KB payloads) |
+
+## Assumptions
+
+The following are NOT yet implemented. This design depends on them but can be built and tested with stubs until they exist.
 
 | Assumption | Dependency | Status |
 |------------|-----------|--------|
-| A1: vtf has a token validation endpoint (`GET /v1/auth/validate/`) | vtf-user-management Phase 1 | **Implemented** (vtf commit `9300560`) |
-| A2: vtf has an ExternalIdentity model for Slack/mobile account linking | vtf-user-management Phase 2 | **Implemented** (vtf commit `9300560`) |
-| A3: vtf has an AgentLock model for exclusive session tracking | vtf-user-management Phase 3 | **Implemented** (vtf commit `9300560`) |
-| A4: vtf has a SessionRecord model for cxdb session indexing | vtf-user-management Phase 2 | **Implemented** (vtf commit `9300560`) |
-| A5: cxdb exposes an API for session trace creation/lookup | cxdb roadmap | **Available** — cxdb HTTP API at `/v1/contexts`, cxdb-mcp service provides `cxdb_list_sessions` and `cxdb_session_summary` tools |
-| A6: Pi coding agent is available in agent pod images | vafi-pi image | **Available** — `harbor.viloforge.com/vafi/vafi-agent-pi:33c11dc` |
-| A7: Pi `--mode rpc` supports all commands documented in rpc-mode.js | Spike results | **Verified** — `prompt`, `get_state`, `get_available_models`, `set_model` tested |
-| A8: Pi `--mode rpc` can connect to HTTP MCP servers | pi-mcp-adapter spike | **Verified** — `pi-mcp-adapter` extension with `mcp.json` config, HTTP URL transport works |
-| A9: Pi JSONL protocol works via kubectl exec relay | S2 spike | **Verified** — all tests passed up to 64KB payloads |
+| A1: vtf has a token validation endpoint (`GET /v1/auth/validate/`) | vtf-user-management Phase 1 | **Verified** — implemented and used by bridge auth middleware |
+| A2: vtf has an ExternalIdentity model for Slack/mobile account linking | vtf-user-management Phase 2 | **Verified** — model exists, not yet used (Phase C) |
+| A3: vtf has an AgentLock model for exclusive session tracking | vtf-user-management Phase 3 | **Verified** — POST/DELETE /v1/locks/ working, E2E verified |
+| A4: vtf has a SessionRecord model for cxdb session indexing | vtf-user-management Phase 2 | **Verified** — POST /v1/sessions/ working, E2E verified |
+| A5: cxdb exposes an API for session trace creation/lookup | cxdb roadmap | **Verified** — cxdb_context_id populated via cxdb lookup |
+| A6: Pi coding agent is available in agent pod images | vafi-pi image design | **Verified** — vafi-agent-pi image deployed to Harbor |
+| A7: Pi `--mode rpc` supports all commands documented in rpc-mode.js | Spike results | **Verified** — prompt, get_state, shutdown all tested E2E |
+| A8: Pi `--mode rpc` can connect to HTTP MCP servers | Spike S1 | **Verified** — pi-mcp-adapter with HTTP transport |
+| A9: Pi JSONL protocol works via kubectl exec relay | Spike S2 | **Verified** — all integrity tests passed |
 
-## Spikes — Status
+## Spikes Required
 
-| Spike | Question | Result |
-|-------|----------|--------|
-| S1: Pi MCP discovery | Can Pi connect to HTTP MCP servers? How? | **RESOLVED**: `pi-mcp-adapter` extension, config via `~/.pi/agent/mcp.json`, supports `url` field for HTTP/StreamableHTTP transport. Install: `pi install npm:pi-mcp-adapter`. |
-| S2: Pi via kubectl exec | Does JSONL survive k8s exec framing? | **RESOLVED**: All tests passed — basic, rapid burst, 64KB payloads, session consistency. Standard line-based readers work. |
-| S3: Pi crash recovery | Does Pi resume from session file after kill? | **Not tested** (production hardening, not a blocker for initial deployment) |
+| Spike | Question | Blocker? | Status |
+|-------|----------|----------|--------|
+| S1: Pi MCP discovery | Can Pi in `--mode rpc` connect to vtf MCP (HTTP MCP server)? | Yes (B3) | **DONE** — pi-mcp-adapter, `pi install npm:pi-mcp-adapter` + mcp.json config |
+| S2: Pi via kubectl exec | Can we relay JSONL stdin/stdout through k8s exec API? | Yes (B4) | **DONE** — 4 tests passed (basic, burst, 64KB, session consistency) |
+| S3: Pi crash recovery | Does Pi resume correctly from session JSONL after kill -9? | No | Not done (production hardening, not blocking) |
 
 ## Verified Facts (from gap analysis)
 
@@ -68,32 +226,9 @@ Cold start is under 1 second. No warm pool needed for ephemeral agents.
 - Mounted from host config dir — pattern at `vf-agents/internal/adapter/pi.go:236-238`
 - Current local config: github-copilot provider, claude-sonnet-4.6 model
 
-**Pi `--no-session` flag (verified from Pi 0.59.0 --help):**
+**Pi `--no-session` flag (verified from Pi 0.58.4 --help):**
 - Exists: "Don't save session (ephemeral)"
 - Suitable for unlocked agent spawn-per-request model
-
-**Pi MCP adapter (verified 2026-04-02):**
-- Install: `pi install npm:pi-mcp-adapter` (baked into `vafi-pi` image)
-- Config: `~/.pi/agent/mcp.json` with `mcpServers` object
-- Supports `url` field for HTTP/StreamableHTTP transport (lazy/eager/keep-alive lifecycle)
-- Proxy pattern: one `mcp()` tool (~200 tokens) instead of registering all MCP tools individually
-- `directTools` option available for first-class tool registration
-
-**Pi JSONL via kubectl exec (verified 2026-04-02):**
-- Line integrity preserved for payloads up to 64KB
-- No splitting, merging, or corruption through k8s exec WebSocket framing
-- MCP adapter events (`extension_ui_request`) also survive intact
-- Non-interactive exec (`kubectl exec` without `-it`) required — TTY mode would corrupt JSONL
-
-**vtf user management (verified 2026-04-02, vtf commit 9300560):**
-- `GET /v1/auth/validate/` — token validation, returns user profile + project list
-- `ExternalIdentity` — links Slack/mobile accounts to vtf users
-- `SessionRecord` — cxdb session indexing per user
-- `AgentLock` — acquire/release/reconnect semantics for locked agents
-- `ChannelProjectMapping` — resolves channel to project for routing
-- `ProjectMembership` — access control on project-scoped endpoints
-- `create_service_account` management command for bridge service auth
-- `HasProjectMembership` permission class for enforcement
 
 ## Architecture
 
@@ -352,7 +487,7 @@ Manages Pi RPC processes — both persistent (locked) and ephemeral (unlocked).
 
 ### Persistent Processes (Locked Agents)
 
-Locked agents run in agent pods. The bridge manages the pod lifecycle and communicates with Pi via kubectl exec stdin/stdout relay. (Spike S2 verified: JSONL survives k8s exec framing intact.)
+Locked agents run in agent pods. The bridge manages the pod lifecycle and communicates with Pi via kubectl exec stdin/stdout relay. **(Requires spike S2 to verify JSONL survives k8s exec framing.)**
 
 **Lifecycle:**
 
@@ -762,12 +897,12 @@ Identified during design review (2026-04-01). Each gap classified as design fix,
 |-----|-------|--------|
 | Ephemeral startup cost | Is Pi cold start too slow for per-request spawn? | **945ms to ready.** Under 1 second. No warm pool needed. |
 
-### Resolved by Spike (2026-04-02)
+### Requires Spike (before implementation)
 
-| Gap | Issue | Result |
-|-----|-------|--------|
-| Pi MCP connectivity | Pi uses extension system, not env vars. | `pi-mcp-adapter` extension handles MCP. Config via `~/.pi/agent/mcp.json`. HTTP URL transport verified. |
-| kubectl exec JSONL relay | K8s exec uses binary WebSocket frames with channel prefix bytes. | JSONL survives intact. Tested: basic, rapid burst, 64KB payloads, session consistency. |
+| Gap | Issue | Spike |
+|-----|-------|-------|
+| Pi MCP connectivity | Pi uses extension system, not env vars. Unknown if/how Pi connects to HTTP MCP servers. | S1: Configure and test Pi → vtf MCP connection in `--mode rpc` |
+| kubectl exec JSONL relay | K8s exec uses binary WebSocket frames with channel prefix bytes. Unknown if Pi's JSONL protocol survives this framing. | S2: Run Pi `--mode rpc` via kubectl exec, verify JSONL round-trip |
 
 ### Requires Spike (before production)
 
@@ -775,67 +910,60 @@ Identified during design review (2026-04-01). Each gap classified as design fix,
 |-----|-------|-------|
 | Pi crash recovery | If Pi dies mid-conversation, can it resume from JSONL session file? What about corrupt/truncated writes? | S3: Kill Pi with `kill -9`, restart with `--session-dir`, verify resume |
 
-### External Blockers — ALL RESOLVED
+### External Blockers (separate workstreams)
 
-| Blocker | What's needed | Resolution |
+| Blocker | What's needed | Workstream |
 |---------|--------------|------------|
-| vtf user management | Token validation, ExternalIdentity, AgentLock, SessionRecord | **Implemented** (vtf commit `9300560`, 6 phases, 73 tests) |
-| vafi-pi agent image | Pi in agent pods | **Implemented** (`vafi-agent-pi:33c11dc`, E2E verified) |
+| vtf user management | Token validation, ExternalIdentity, AgentLock, SessionRecord models and endpoints | vtf-user-management-DESIGN.md Phases 1-3 (in progress) |
+| vafi-pi agent image | Pi not in current vafi-agent image. Need image with Pi installed + auth config. Pattern exists in vf-agents Dockerfile.pi. | Separate design doc (not started) |
 
-## What Can Be Built Now
+## What Can Be Built Now (Without vtf User Management)
 
-All blockers are resolved. Every component can be built with real dependencies (no stubs needed).
+| Component | Dependency | Can build now? |
+|-----------|-----------|----------------|
+| Bridge FastAPI skeleton with endpoints | None | Yes |
+| Ephemeral process manager (local Pi spawn) | None | Yes |
+| Ephemeral session spawn/terminate | None | Yes |
+| Role configuration loader | None | Yes |
+| Health endpoint with process state | None | Yes |
+| Streaming response (NDJSON) | None | Yes |
+| Concurrency limiter (semaphore) | None | Yes |
+| Rate limiter (per-user) | None | Yes |
+| Channel adapter interface (Protocol) | None | Yes |
+| Auth middleware | Token validation (A1) | Stub with hardcoded token |
+| Web ChatWidget | None (uses bridge API directly) | Yes |
+| Session recording | SessionRecord (A4) | Stub with local log |
+| Locked process manager (Pi in pods) | vafi-pi image (B2) + spike S2 | **No — blocked** |
+| Lock manager with vtf persistence | AgentLock model (A3) | Stub in-memory only |
+| Slack adapter identity resolution | ExternalIdentity (A2) | Stub identity only |
+| Pi MCP tool access | Spike S1 | **Verified** — pi-mcp-adapter works |
 
-| Component | Dependency | Status |
-|-----------|-----------|--------|
-| Bridge FastAPI skeleton with endpoints | None | Ready |
-| Ephemeral process manager (local Pi spawn) | None | Ready |
-| Locked process manager (Pi in pods) | vafi-pi image, kubectl exec relay | **Unblocked** (both verified) |
-| Lock manager with vtf persistence | AgentLock model | **Unblocked** (vtf commit `9300560`) |
-| Auth middleware | Token validation endpoint | **Unblocked** (vtf `GET /v1/auth/validate/`) |
-| Session recording | SessionRecord model | **Unblocked** (vtf commit `9300560`) |
-| Slack adapter identity resolution | ExternalIdentity model | **Unblocked** (vtf commit `9300560`) |
-| Pi MCP tool access | pi-mcp-adapter | **Unblocked** (spike verified) |
-| Web ChatWidget | None (uses bridge API) | Ready |
-| Role configuration, health, streaming, rate limiting | None | Ready |
+## Implementation Status
 
-## Implementation Sequence
+### Phase A: Ephemeral Path — COMPLETE (2026-04-02)
 
-### Phase A: Core Service + Ephemeral Path
+1. ~~**Spikes S1 + S2**~~ — Done. Pi MCP via pi-mcp-adapter, kubectl exec JSONL verified.
+2. ~~**Bridge skeleton**~~ — FastAPI app deployed at bridge.dev.viloforge.com
+3. ~~**Ephemeral process manager**~~ — Pi `--mode rpc --no-session`, ManagedProcess dataclass
+4. ~~**Prompt endpoint**~~ — `/v1/prompt` and `/v1/prompt/stream` with rate limiting (429), concurrency (503), timeout (504), streaming NDJSON with `agent_event`
+5. ~~**Auth middleware**~~ — Real vtf token validation (not stub)
+6. ~~**Session recording**~~ — POST /v1/sessions/ to vtf after every prompt
+7. **Web ChatWidget** — Not started (Phase C)
 
-All dependencies resolved. Can build with real vtf auth from the start.
+### Phase B: Locked Path — COMPLETE (2026-04-02)
 
-1. **Bridge skeleton** — FastAPI app with role config loader, health endpoint, CORS
-2. **Auth middleware** — vtf token validation via `GET /v1/auth/validate/` (real, not stub)
-3. **Ephemeral process manager** — Local PiSession class, spawn/track/shutdown
-4. **Prompt endpoint** — `/v1/prompt` and `/v1/prompt/stream` with ephemeral spawn, concurrency limiter, rate limiter
-5. **Session recording** — vtf SessionRecord model (real, not stub)
-6. **Channel adapter interface** — Protocol class, registration mechanism
+8. ~~**vafi-pi image**~~ — vafi-agent-pi deployed to Harbor, E2E passed
+9. ~~**Pod process manager**~~ — kubectl exec relay with background reader task + response queue
+10. ~~**Lock manager**~~ — vtf AgentLock persistence (POST/DELETE /v1/locks/)
+11. ~~**Locked session routing**~~ — Prompts route to persistent Pi via exec stdin
+12. ~~**Timeout manager**~~ — Background idle timeout task
+13. ~~**Recovery on restart**~~ — Queries vtf for active locks, reconnects or releases stale
 
-### Phase B: Locked Path
+**Test coverage:** 252 unit + 12 E2E = 264 total tests. All verified against vafi-dev.
 
-7. **Pod process manager** — kubectl exec relay to Pi in `vafi-agent-pi` pods
-8. **Lock manager** — vtf AgentLock model for persistence, `/v1/lock` and `/v1/unlock` endpoints
-9. **Locked session routing** — `/v1/prompt` routes to persistent Pi process when locked
-10. **Timeout manager** — Background task for idle timeout and warnings
+### Phase C: Channels + UI — NOT STARTED
 
-### Phase C: Channels + UI
-
-11. **Web ChatWidget** — React component in vtf web, calls bridge API directly
-12. **Slack adapter** — Events webhook, ExternalIdentity resolution, slash commands
-13. **End-to-end testing** — Full flow: Slack message → bridge → Pi → vtf → response
-
-### Dependency Graph
-
-```
-Phase A: Core + ephemeral (no blockers)
-    │
-    ├── Phase B: Locked path (can start after step 4)
-    │
-    └── Phase C: Channels + UI (can start after step 6)
-            │
-            ▼
-    Production deployment (all phases complete)
-```
-
-All three phases can overlap. Phase B can start once the prompt endpoint works (step 4). Phase C can start once the adapter interface exists (step 6).
+14. **Slack adapter** — Events webhook, ExternalIdentity resolution, slash commands
+15. **Web ChatWidget** — React component in vtf web UI
+16. **Mobile adapter** — Direct HTTP client (no server-side component)
+17. **vafi-console coexistence** — Both terminal and chat interfaces available
