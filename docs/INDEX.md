@@ -1,6 +1,6 @@
 # vafi Documentation
 
-Last updated: 2026-04-02
+Last updated: 2026-04-13
 
 ## How to read these docs
 
@@ -12,7 +12,7 @@ Last updated: 2026-04-02
 - Working on the vtf/vafi boundary? Read [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md)
 - Adding context passing to the controller? Read [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md)
 - Working on the architect agent or vafi-console? Read [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md)
-- Designing the agent bridge service? Read [agent-bridge-service-DESIGN.md](agent-bridge-service-DESIGN.md)
+- Working on the agent bridge service? Read [bridge/agent-bridge-service-DESIGN.md](bridge/agent-bridge-service-DESIGN.md) (start with the "Start Here" section)
 
 ## Active Documents
 
@@ -25,7 +25,9 @@ These are authoritative and kept up-to-date.
 | [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md) | API contract between vtf and vafi — 14 interaction points, WorkSource protocol, gap analysis (GAP-1/GAP-4 resolved) |
 | [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md) | Context file design — `.vafi/context.md` materialized before each harness invocation |
 | [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md) | Architect agent — pod lifecycle, vafi-console integration, WebSocket proxy, MCP tools |
-| [agent-bridge-service-DESIGN.md](agent-bridge-service-DESIGN.md) | Agent bridge service — API design, Pi RPC process manager, channel adapters (Slack, web, mobile). Future work. |
+| [bridge/agent-bridge-service-DESIGN.md](bridge/agent-bridge-service-DESIGN.md) | Agent bridge service — HTTP API for agent prompts, Pi RPC process manager, locked/ephemeral sessions. Phase A+B implemented, Phase C (channels) remaining. |
+| [bridge/agent-bridge-IMPLEMENTATION-PLAN.md](bridge/agent-bridge-IMPLEMENTATION-PLAN.md) | Original 10-phase TDD implementation plan with acceptance criteria (historical). |
+| [bridge/agent-bridge-REWORK-PLAN.md](bridge/agent-bridge-REWORK-PLAN.md) | 18-item rework plan correcting implementation deviations (historical). |
 
 ## Archived Documents
 
