@@ -20,17 +20,17 @@ Read these docs in this order. Each builds on the previous.
 
 | # | Doc | What you'll learn |
 |---|-----|-------------------|
-| 1 | [agent-as-a-service-harness-REPORT.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/agent-as-a-service-harness-REPORT.md) | Why Pi RPC was chosen over Claude Code CLI. Pi's `--mode rpc` provides a persistent process with JSONL stdin/stdout — zero restart overhead. Claude Code has no equivalent. |
-| 2 | [agent-session-routing-RESEARCH.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/agent-session-routing-RESEARCH.md) | The two session patterns (locked vs ephemeral), identity resolution, and how routing works. |
+| 1 | [agent-as-a-service-harness-REPORT.md](https://github.com/vilosource/viloforge-research/blob/develop/agent-as-a-service-harness-REPORT.md) | Why Pi RPC was chosen over Claude Code CLI. Pi's `--mode rpc` provides a persistent process with JSONL stdin/stdout — zero restart overhead. Claude Code has no equivalent. |
+| 2 | [agent-session-routing-RESEARCH.md](https://github.com/vilosource/viloforge-research/blob/develop/agent-session-routing-RESEARCH.md) | The two session patterns (locked vs ephemeral), identity resolution, and how routing works. |
 | 3 | **This doc** (agent-bridge-service-DESIGN.md) | Architecture, API, process model, deployment. The canonical design reference. |
 | 4 | [agent-bridge-IMPLEMENTATION-PLAN.md](agent-bridge-IMPLEMENTATION-PLAN.md) | Original 10-phase TDD plan with acceptance criteria. Useful for understanding intent behind each component. |
 | 5 | [agent-bridge-REWORK-PLAN.md](agent-bridge-REWORK-PLAN.md) | 18 deviations found after initial implementation. Documents what went wrong and how it was corrected. Read this to understand why certain things are built the way they are (e.g., `--mode rpc` instead of `--mode json`, background reader task). |
 
-**Spike PoCs** (optional, in [viloforge-research](https://github.com/vilosource/viloforge-research/tree/develop/viloforge) repo):
-- [claude-code-rpc-bridge-RESEARCH.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/claude-code-rpc-bridge-RESEARCH.md) — initial RPC bridge research
-- [claude-code-rpc-bridge-SPIKE.md](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/claude-code-rpc-bridge-SPIKE.md) — Claude Code spike results
-- [spikes/rpc-bridge/bridge_pi.py](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/spikes/rpc-bridge/bridge_pi.py) — Pi bridge PoC (the code that proved the pattern)
-- [spikes/rpc-bridge/bridge.py](https://github.com/vilosource/viloforge-research/blob/develop/viloforge/spikes/rpc-bridge/bridge.py) — Claude Code bridge PoC
+**Spike PoCs** (optional, in [viloforge-research](https://github.com/vilosource/viloforge-research/tree/develop) repo):
+- [claude-code-rpc-bridge-RESEARCH.md](https://github.com/vilosource/viloforge-research/blob/develop/claude-code-rpc-bridge-RESEARCH.md) — initial RPC bridge research
+- [claude-code-rpc-bridge-SPIKE.md](https://github.com/vilosource/viloforge-research/blob/develop/claude-code-rpc-bridge-SPIKE.md) — Claude Code spike results
+- [spikes/rpc-bridge/bridge_pi.py](https://github.com/vilosource/viloforge-research/blob/develop/spikes/rpc-bridge/bridge_pi.py) — Pi bridge PoC (the code that proved the pattern)
+- [spikes/rpc-bridge/bridge.py](https://github.com/vilosource/viloforge-research/blob/develop/spikes/rpc-bridge/bridge.py) — Claude Code bridge PoC
 
 ### Source code
 
