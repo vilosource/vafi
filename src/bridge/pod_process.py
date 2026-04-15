@@ -255,7 +255,10 @@ class PodExecConnection:
             # Check buffer for complete line
             if "\n" in self._buffer:
                 line, self._buffer = self._buffer.split("\n", 1)
-                return line.encode("utf-8")
+                if line.strip():
+                    return line.encode("utf-8")
+                # Empty line — skip and continue reading
+                continue
 
             # Read next WebSocket message
             logger.debug(f"read_stdout: waiting for ws message (buffer={len(self._buffer)} chars)")

@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
-from bridge.pod_process import PodProcessManager, PodSession
+from bridge.pod_process import PodProcessManager, PodSession, PodExecConnection
 
 
 class TestPodProcessManager:
@@ -269,3 +271,42 @@ class TestPodSession:
         # All 3 events should be yielded (plus session), then break on stop
         types = [json.loads(l).get("type") for l in collected]
         assert types.count("message") == 3  # toolUse msg + toolResult + stop msg
+
+
+class TestPodExecConnectionReadStdout:
+    """Tests for PodExecConnection.read_stdout empty-line handling."""
+
+    @pytest.mark.asyncio
+    async def test_read_stdout_skips_empty_lines(self):
+        """read_stdout skips empty lines and returns next non-empty line."""
+        import aiohttp
+
+        # Simulate ws that sends "line1\n\n\nline2\n" in one frame
+        mock_ws = AsyncMock()
+        msg = MagicMock()
+        msg.type = aiohttp.WSMsgType.BINARY
+        # Channel 1 (stdout) + payload with embedded empty lines
+        msg.data = bytes([1]) + b'{"type":"event1"}\n\n\n{"type":"event2"}\n'
+        mock_ws.receive = AsyncMock(return_value=msg)
+
+        conn = PodExecConnection(ws=mock_ws, ws_ctx=MagicMock(), ws_client=MagicMock())
+
+        line1 = await conn.read_stdout()
+        assert line1 == b'{"type":"event1"}'
+
+        line2 = await conn.read_stdout()
+        assert line2 == b'{"type":"event2"}'
+
+    @pytest.mark.asyncio
+    async def test_read_stdout_eof_on_ws_close(self):
+        """read_stdout returns b'' on WebSocket close (true EOF)."""
+        import aiohttp
+
+        mock_ws = AsyncMock()
+        msg = MagicMock()
+        msg.type = aiohttp.WSMsgType.CLOSE
+        mock_ws.receive = AsyncMock(return_value=msg)
+
+        conn = PodExecConnection(ws=mock_ws, ws_ctx=MagicMock(), ws_client=MagicMock())
+        result = await conn.read_stdout()
+        assert result == b""
