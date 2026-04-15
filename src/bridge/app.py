@@ -152,7 +152,7 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                             await session.shutdown()
                         except Exception:
                             pass
-                cleaned = lock_manager.cleanup_expired()
+                cleaned = await lock_manager.cleanup_expired()
                 if cleaned:
                     logger.info(f"Idle timeout: cleaned {cleaned} expired lock(s)")
             except Exception as e:
@@ -203,10 +203,18 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                         model=role_config.model if role_config else "claude-sonnet-4-20250514",
                         thinking_level=role_config.thinking_level if role_config else "medium",
                     )
-                    exec_conn = await pod_manager.exec_pi(pod_name, exec_cmd)
+                    exec_conn = await pod_manager.exec_on_pod(pod_name, exec_cmd)
 
                     from .pod_process import PodSession
-                    pod_session = PodSession(ws=exec_conn, session_id=vtf_lock.get("session_id"))
+
+                    async def _on_recovered_close(p=project, r=role_name):
+                        logger.info(f"Recovered session closed for {p}:{r}, releasing lock")
+                        await lock_manager.force_release(p, r)
+
+                    pod_session = PodSession(
+                        ws=exec_conn, session_id=vtf_lock.get("session_id"),
+                        on_close=_on_recovered_close,
+                    )
                     await pod_session.initialize()
 
                     lock_manager._locks[key] = {
@@ -294,6 +302,9 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             pod_session = lock_manager.get_session(body.project, body.role)
             if not pod_session:
                 raise HTTPException(status_code=503, detail="Locked session not ready")
+            if not pod_session.is_alive:
+                await lock_manager.force_release(body.project, body.role)
+                raise HTTPException(status_code=503, detail="Session expired. Please reconnect.")
 
             start_time = time.monotonic()
             result = await pod_session.send_prompt(body.message)
@@ -359,7 +370,11 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             )
 
     # Pod process manager for locked sessions
-    pod_manager = PodProcessManager(namespace=BRIDGE_NAMESPACE, image=AGENT_PI_IMAGE)
+    sessions_pvc = os.environ.get("SESSIONS_PVC_NAME", "console-sessions")
+    pod_manager = PodProcessManager(
+        namespace=BRIDGE_NAMESPACE, image=AGENT_PI_IMAGE,
+        sessions_pvc=sessions_pvc,
+    )
 
     @app.post("/v1/lock")
     async def acquire_lock(body: LockRequest, request: Request):
@@ -386,6 +401,7 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                 project=body.project, role=body.role,
                 vtf_mcp_url=VTF_MCP_URL, vtf_token=VTF_API_TOKEN,
                 cxdb_mcp_url=CXDB_MCP_URL, otel_endpoint=OTEL_ENDPOINT,
+                vtf_api_url=vtf_api_url,
             )
             # Add API keys from bridge pod env
             for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
@@ -397,7 +413,6 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                 project=body.project, user=user["username"],
                 role=body.role, env_vars=env_vars,
             )
-            pod_name = await pod_manager.create_or_get_pod(pod_spec)
 
             exec_cmd = pod_manager.build_exec_command(
                 project=body.project,
@@ -406,9 +421,13 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                 model=role_config.model if role_config else "claude-sonnet-4-20250514",
                 thinking_level=role_config.thinking_level if role_config else "medium",
             )
-            exec_conn = await pod_manager.exec_pi(pod_name, exec_cmd)
+            exec_conn = await pod_manager.create_and_exec(pod_spec, exec_cmd)
 
-            pod_session = PodSession(ws=exec_conn, session_id=None)
+            async def _on_session_close():
+                logger.info(f"Session closed for {body.project}:{body.role}, releasing lock")
+                await lock_manager.force_release(body.project, body.role)
+
+            pod_session = PodSession(ws=exec_conn, session_id=None, on_close=_on_session_close)
             await pod_session.initialize()
             lock_manager.set_session(body.project, body.role, pod_session)
 
@@ -441,8 +460,10 @@ def create_app(roles_config: str | None = None) -> FastAPI:
         return {"released": True}
 
     @app.get("/v1/locks")
-    async def list_locks():
-        return await lock_manager.list_locks()
+    async def list_locks(request: Request):
+        project = request.query_params.get("project")
+        role = request.query_params.get("role")
+        return await lock_manager.list_locks(project_id=project, role=role)
 
     @app.get("/v1/sessions")
     async def list_sessions(request: Request):
@@ -476,6 +497,9 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             pod_session = lock_manager.get_session(body.project, body.role)
             if not pod_session:
                 raise HTTPException(status_code=503, detail="Locked session not ready")
+            if not pod_session.is_alive:
+                await lock_manager.force_release(body.project, body.role)
+                raise HTTPException(status_code=503, detail="Session expired. Please reconnect.")
 
             async def generate_locked():
                 async for line in pod_session.stream_prompt(body.message):

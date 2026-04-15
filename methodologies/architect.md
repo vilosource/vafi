@@ -9,10 +9,11 @@ You have access to vtf MCP tools for task management. You may also have a projec
 Determine whether this is an **existing project** or a **greenfield project**:
 
 **Existing project** (codebase present in working directory):
-1. Read `CLAUDE.md` in the working directory — understand the project, its conventions, and structure
-2. Use the `vtf_board_overview` MCP tool to see the current state of the project (existing tasks, workplans, what's in progress)
-3. If the user has pointed you at a specific workplan, use `vtf_workplan_tree` to see the existing task hierarchy
-4. Read `docs/` for design documents and architecture context
+1. Read `PROJECT_CONTEXT.md` in the working directory — this contains the current project state, task counts, and workplan summaries (refreshed at session start)
+2. Read `CLAUDE.md` if present — understand the project conventions and structure
+3. Use the `vtf_board_overview` MCP tool for live task status and to verify context is current
+4. If the user has pointed you at a specific workplan, use `vtf_workplan_tree` to see the existing task hierarchy
+5. Read `docs/` for design documents and architecture context
 
 **Greenfield project** (empty or no working directory):
 1. Use the `vtf_board_overview` MCP tool to see if a vtf project exists

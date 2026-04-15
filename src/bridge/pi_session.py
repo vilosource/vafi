@@ -48,6 +48,7 @@ def build_pi_env(
     vtf_token: str = "",
     cxdb_mcp_url: str = "",
     otel_endpoint: str = "",
+    vtf_api_url: str = "",
 ) -> dict[str, str]:
     """Build environment variables for a Pi RPC process per design spec."""
     env = dict(os.environ)
@@ -62,6 +63,8 @@ def build_pi_env(
     if otel_endpoint:
         env["PI_OTEL_ENDPOINT"] = otel_endpoint
         env["PI_OTEL_PROTOCOL"] = "http/protobuf"
+    if vtf_api_url:
+        env["VTF_API_URL"] = vtf_api_url
 
     return env
 
@@ -155,36 +158,27 @@ class PiSession:
         )
 
         try:
+            from .pi_protocol import pi_handshake
+
             all_output_lines = []
-            session_id = None
 
-            # In RPC mode, Pi doesn't emit a session event. We get the session ID
-            # by sending get_state and reading the response.
-            get_state_cmd = json.dumps({"type": "get_state"}) + "\n"
-            process.stdin.write(get_state_cmd.encode("utf-8"))
-            await process.stdin.drain()
+            async def _write(data: bytes) -> None:
+                process.stdin.write(data)
+                await process.stdin.drain()
 
-            # Read initial events until we get the get_state response
-            while True:
+            async def _read() -> str | None:
                 try:
-                    line_bytes = await asyncio.wait_for(
-                        process.stdout.readline(), timeout=15,
-                    )
+                    line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=15)
                 except asyncio.TimeoutError:
-                    break
+                    return None
                 if not line_bytes:
-                    break
+                    return None
                 line = line_bytes.decode("utf-8").rstrip("\n")
-                if not line.strip():
-                    continue
-                event = parse_pi_event(line)
-                if event and event.type == "response" and event.data.get("command") == "get_state":
-                    session_id = event.data.get("data", {}).get("sessionId")
-                    # Synthesize a session line for parse_output
-                    all_output_lines.append(json.dumps({"type": "session", "id": session_id}))
-                    break
-                # Skip extension_ui_request and other init events
-                continue
+                return line if line.strip() else await _read()
+
+            session_id = await pi_handshake(write_fn=_write, read_fn=_read)
+            if session_id:
+                all_output_lines.append(json.dumps({"type": "session", "id": session_id}))
 
             # Send prompt command via stdin
             prompt_cmd = json.dumps({"type": "prompt", "message": prompt}) + "\n"
@@ -256,30 +250,25 @@ class PiSession:
         )
 
         try:
-            # Get session ID via get_state (Pi RPC doesn't emit session events)
-            get_state_cmd = json.dumps({"type": "get_state"}) + "\n"
-            process.stdin.write(get_state_cmd.encode("utf-8"))
-            await process.stdin.drain()
+            from .pi_protocol import pi_handshake
 
-            while True:
+            async def _write(data: bytes) -> None:
+                process.stdin.write(data)
+                await process.stdin.drain()
+
+            async def _read() -> str | None:
                 try:
-                    line_bytes = await asyncio.wait_for(
-                        process.stdout.readline(), timeout=15,
-                    )
+                    line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=15)
                 except asyncio.TimeoutError:
-                    break
+                    return None
                 if not line_bytes:
-                    break
+                    return None
                 line = line_bytes.decode("utf-8").rstrip("\n")
-                if not line.strip():
-                    continue
-                event = parse_pi_event(line)
-                if event and event.type == "response" and event.data.get("command") == "get_state":
-                    session_id = event.data.get("data", {}).get("sessionId")
-                    # Yield synthesized session event for the stream consumer
-                    yield json.dumps({"type": "session", "id": session_id})
-                    break
-                continue
+                return line if line.strip() else await _read()
+
+            session_id = await pi_handshake(write_fn=_write, read_fn=_read)
+            if session_id:
+                yield json.dumps({"type": "session", "id": session_id})
 
             # Send prompt
             prompt_cmd = json.dumps({"type": "prompt", "message": prompt}) + "\n"

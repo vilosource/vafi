@@ -29,9 +29,10 @@ def _sanitize_k8s_name(s: str) -> str:
 class PodProcessManager:
     """Manages pod lifecycle and exec connections for locked sessions."""
 
-    def __init__(self, namespace: str, image: str):
+    def __init__(self, namespace: str, image: str, sessions_pvc: str = "console-sessions"):
         self.namespace = namespace
         self.image = image
+        self.sessions_pvc = sessions_pvc
 
     def build_pod_spec(
         self,
@@ -62,21 +63,28 @@ class PodProcessManager:
                 "containers": [{
                     "name": "pi-agent",
                     "image": self.image,
+                    "imagePullPolicy": "Always",
                     "command": ["sleep", "infinity"],
                     "env": env,
                     "resources": {
-                        "requests": {"memory": "256Mi", "cpu": "100m"},
-                        "limits": {"memory": "1Gi", "cpu": "1000m"},
+                        "requests": {"memory": "1Gi", "cpu": "500m"},
+                        "limits": {"memory": "2Gi", "cpu": "1000m"},
                     },
-                    "volumeMounts": [{
+                    "volumeMounts": [
+                        {"name": "sessions", "mountPath": "/sessions"},
+                        {"name": "github-ssh", "mountPath": "/home/agent/.ssh", "readOnly": True},
+                    ],
+                }],
+                "volumes": [
+                    {
                         "name": "sessions",
-                        "mountPath": "/sessions",
-                    }],
-                }],
-                "volumes": [{
-                    "name": "sessions",
-                    "emptyDir": {},
-                }],
+                        "persistentVolumeClaim": {"claimName": self.sessions_pvc},
+                    },
+                    {
+                        "name": "github-ssh",
+                        "secret": {"secretName": "github-ssh", "defaultMode": 0o400},
+                    },
+                ],
                 "restartPolicy": "Never",
                 "imagePullSecrets": [{"name": "harbor-registry"}],
             },
@@ -92,92 +100,133 @@ class PodProcessManager:
     ) -> list[str]:
         """Build Pi exec command for a locked session.
 
-        Sources init.sh for config (models.json, MCP), then starts Pi
-        in RPC mode. init.sh is provided by the harness image at
-        /opt/vf-harness/init.sh.
+        Writes Pi config (models.json, mcp.json), hydrates project
+        context, clones repo if needed, then starts Pi in RPC mode.
         """
+        sanitized = _sanitize_k8s_name(project)
         pi_args = "--mode rpc"
-        session_dir = f"/sessions/{_sanitize_k8s_name(project)}/"
+        session_dir = f"/sessions/{sanitized}/"
         pi_args += f" --session-dir {session_dir} --provider {provider} --model {model}"
         if methodology:
             pi_args += f" --append-system-prompt {methodology}"
         if thinking_level:
             pi_args += f" --thinking {thinking_level}"
 
+        # Write Pi config files (settings.json, models.json, mcp.json)
+        pi_config = "python3 /opt/vf-agent/pi_config.py 1>&2"
+
+        # Hydrate project context from VTF API
+        hydrate = (
+            f"python3 /opt/vf-agent/hydrate_context.py"
+            f" /sessions/{sanitized}/ 1>&2 || true"
+        )
+
+        # Clone repo if hydration found a repo_url and .git doesn't exist yet
+        # Uses -- to prevent flag injection from repo URL
+        clone = (
+            f"cd /sessions/{sanitized}/ &&"
+            f" if [ ! -d .git ] && [ -f /tmp/repo_url ]; then"
+            f" git clone --depth 1 -- \"$(cat /tmp/repo_url)\" . 1>&2 || true; fi"
+        )
+
         return [
             "bash", "-c",
-            f"source /opt/vf-harness/init.sh && exec pi {pi_args}",
+            f"{pi_config}; {hydrate}; {clone}; exec pi {pi_args}",
         ]
 
-    async def create_or_get_pod(self, spec: dict[str, Any]) -> str:
-        """Create pod if it doesn't exist, return pod name.
+    async def create_and_exec(
+        self,
+        spec: dict[str, Any],
+        command: list[str],
+    ) -> "PodExecConnection":
+        """Create pod (if needed) and open exec connection in a single flow.
 
-        Uses kubernetes_asyncio to interact with the k8s API.
+        Uses one WsApiClient for both pod management and exec to avoid
+        issues with multiple kubernetes client instances conflicting.
         """
         from kubernetes_asyncio import client as k8s_client, config as k8s_config
+        from kubernetes_asyncio.stream import WsApiClient
 
         k8s_config.load_incluster_config()
-        async with k8s_client.ApiClient() as api:
+
+        pod_name = spec["metadata"]["name"]
+        namespace = spec["metadata"]["namespace"]
+
+        # Phase 1: Ensure pod exists and is running
+        api = k8s_client.ApiClient()
+        try:
             v1 = k8s_client.CoreV1Api(api)
-            pod_name = spec["metadata"]["name"]
-            namespace = spec["metadata"]["namespace"]
 
             try:
                 existing = await v1.read_namespaced_pod(pod_name, namespace)
                 if existing.status.phase in ("Running", "Pending"):
                     logger.info(f"Pod {pod_name} already exists ({existing.status.phase})")
-                    return pod_name
+                else:
+                    raise k8s_client.exceptions.ApiException(status=404)
             except k8s_client.exceptions.ApiException as e:
                 if e.status != 404:
                     raise
-
-            # Create pod
-            logger.info(f"Creating pod {pod_name} in {namespace}")
-            await v1.create_namespaced_pod(namespace, spec)
+                logger.info(f"Creating pod {pod_name} in {namespace}")
+                await v1.create_namespaced_pod(namespace, spec)
 
             # Wait for ready
             for _ in range(60):
                 pod = await v1.read_namespaced_pod(pod_name, namespace)
                 if pod.status.phase == "Running":
                     logger.info(f"Pod {pod_name} is running")
-                    return pod_name
+                    break
                 await asyncio.sleep(1)
+            else:
+                raise TimeoutError(f"Pod {pod_name} not ready after 60s")
+        finally:
+            await api.close()
 
-            raise TimeoutError(f"Pod {pod_name} not ready after 60s")
-
-    async def exec_pi(self, pod_name: str, command: list[str]) -> "PodExecConnection":
-        """Open kubectl exec connection to Pi in the pod.
-
-        Returns a PodExecConnection that provides read_stdout/write_stdin.
-        The connection uses the k8s exec WebSocket with binary framing
-        (channel prefix bytes: 0=stdin, 1=stdout, 2=stderr).
-        """
-        from kubernetes_asyncio import client as k8s_client, config as k8s_config
-        from kubernetes_asyncio.stream import WsApiClient
-
-        k8s_config.load_incluster_config()
+        # Phase 2: Open exec WebSocket (fresh client, no interference)
         ws_client = WsApiClient()
-        v1 = k8s_client.CoreV1Api(ws_client)
+        v1_ws = k8s_client.CoreV1Api(ws_client)
 
         logger.info(f"Opening exec to pod {pod_name}: {' '.join(command[:5])}")
 
-        ws_ctx = await v1.connect_get_namespaced_pod_exec(
+        ws_ctx = await v1_ws.connect_get_namespaced_pod_exec(
             pod_name,
             self.namespace,
             command=command,
-            container="agent",
+            container="pi-agent",
             stdin=True,
             stdout=True,
             stderr=True,
             _preload_content=False,
         )
 
-        # Enter the async context manager to get the actual WebSocket.
-        # IMPORTANT: We must keep ws_client and ws_ctx alive for the lifetime
-        # of the session. The PodExecConnection holds references to prevent GC.
         ws = await ws_ctx.__aenter__()
         logger.info(f"Exec WebSocket opened to pod {pod_name}")
 
+        return PodExecConnection(ws=ws, ws_ctx=ws_ctx, ws_client=ws_client, _buffer="")
+
+    async def exec_on_pod(self, pod_name: str, command: list[str]) -> "PodExecConnection":
+        """Open exec connection to an existing running pod."""
+        from kubernetes_asyncio import client as k8s_client, config as k8s_config
+        from kubernetes_asyncio.stream import WsApiClient
+
+        k8s_config.load_incluster_config()
+        ws_client = WsApiClient()
+        v1_ws = k8s_client.CoreV1Api(ws_client)
+
+        logger.info(f"Opening exec to existing pod {pod_name}: {' '.join(command[:5])}")
+
+        ws_ctx = await v1_ws.connect_get_namespaced_pod_exec(
+            pod_name,
+            self.namespace,
+            command=command,
+            container="pi-agent",
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            _preload_content=False,
+        )
+
+        ws = await ws_ctx.__aenter__()
+        logger.info(f"Exec WebSocket opened to pod {pod_name}")
         return PodExecConnection(ws=ws, ws_ctx=ws_ctx, ws_client=ws_client, _buffer="")
 
 
@@ -209,14 +258,19 @@ class PodExecConnection:
                 return line.encode("utf-8")
 
             # Read next WebSocket message
+            logger.debug(f"read_stdout: waiting for ws message (buffer={len(self._buffer)} chars)")
             msg = await self.ws.receive()
+            logger.debug(f"read_stdout: got msg type={msg.type} len={len(msg.data) if msg.data else 0}")
             if msg.type == aiohttp.WSMsgType.BINARY:
                 if len(msg.data) >= 2:
                     channel = msg.data[0]
                     payload = msg.data[1:]
                     if channel == 1:  # stdout
                         self._buffer += payload.decode("utf-8", errors="replace")
-                    # Skip stderr (channel 2) and others
+                    elif channel == 2:  # stderr
+                        logger.info(f"Pod stderr: {payload.decode('utf-8', errors='replace').strip()}")
+                    elif channel == 3:  # error channel
+                        logger.warning(f"Pod error channel: {payload.decode('utf-8', errors='replace').strip()}")
             elif msg.type == aiohttp.WSMsgType.TEXT:
                 # v4 protocol may send TEXT frames with channel as first char
                 if len(msg.data) >= 2:
@@ -224,6 +278,10 @@ class PodExecConnection:
                     payload = msg.data[1:]
                     if channel == 1:  # stdout
                         self._buffer += payload
+                    elif channel == 2:  # stderr
+                        logger.info(f"Pod stderr (text): {payload.strip()}")
+                    elif channel == 3:  # error channel
+                        logger.warning(f"Pod error channel (text): {payload.strip()}")
             elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                 return b""
 
@@ -254,14 +312,26 @@ class PodSession:
     an asyncio.Queue to collect events when a prompt is active.
     """
 
-    def __init__(self, ws: Any, session_id: str | None = None):
+    def __init__(
+        self,
+        ws: Any,
+        session_id: str | None = None,
+        on_close: Any | None = None,
+    ):
         self.ws = ws
         self.session_id = session_id
+        self.on_close = on_close  # async callable, invoked when reader loop exits
         self.lock = asyncio.Lock()
         self.prompt_count = 0
+        self._alive = True
         self._event_queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._reader_task: asyncio.Task | None = None
         self._collecting = False  # True when a prompt is waiting for events
+
+    @property
+    def is_alive(self) -> bool:
+        """Whether the exec connection is still active."""
+        return self._alive
 
     async def _reader_loop(self) -> None:
         """Background task: read from exec WebSocket, enqueue lines."""
@@ -278,13 +348,18 @@ class PodSession:
                     break
                 line = data.decode("utf-8").strip() if isinstance(data, bytes) else data.strip()
                 if line:
-                    logger.debug(f"Reader enqueued event for {self.session_id}: {line[:80]}")
                     await self._event_queue.put(line)
         except asyncio.CancelledError:
             logger.info(f"Reader loop cancelled for {self.session_id}")
         finally:
+            self._alive = False
             logger.info(f"Reader loop ended for {self.session_id}")
             await self._event_queue.put(None)  # Signal EOF
+            if self.on_close:
+                try:
+                    await self.on_close()
+                except Exception as e:
+                    logger.warning(f"on_close callback failed for {self.session_id}: {e}")
 
     def start_reader(self) -> None:
         """Start the background reader task."""
@@ -293,21 +368,21 @@ class PodSession:
 
     async def initialize(self) -> None:
         """Start reader, send get_state to get session ID."""
+        from .pi_protocol import pi_handshake
+
         self.start_reader()
 
-        cmd = json.dumps({"type": "get_state"}) + "\n"
-        await self.ws.write_stdin(cmd.encode("utf-8"))
-
-        # Read events from queue until we get the get_state response
-        while True:
-            line = await asyncio.wait_for(self._event_queue.get(), timeout=15)
+        async def _read_line() -> str | None:
+            line = await asyncio.wait_for(self._event_queue.get(), timeout=120)
             if line is None:
-                break
-            event = parse_pi_event(line)
-            if event and event.type == "response" and event.data.get("command") == "get_state":
-                self.session_id = event.data.get("data", {}).get("sessionId")
-                break
-            # Skip extension_ui_request and other init events
+                raise RuntimeError("Pi process exited before becoming ready")
+            return line
+
+        self.session_id = await pi_handshake(
+            write_fn=self.ws.write_stdin,
+            read_fn=_read_line,
+        )
+        logger.info(f"Pi session initialized: {self.session_id}")
 
     async def send_prompt(self, message: str) -> dict[str, Any]:
         """Send a prompt and collect the full response."""
@@ -342,6 +417,10 @@ class PodSession:
 
     async def stream_prompt(self, message: str) -> AsyncIterator[str]:
         """Send a prompt and yield JSONL lines as they arrive."""
+        if not self._alive:
+            yield json.dumps({"type": "error", "message": "Session expired. Please reconnect."})
+            return
+
         async with self.lock:
             self.prompt_count += 1
 

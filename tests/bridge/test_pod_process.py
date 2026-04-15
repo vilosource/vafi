@@ -31,6 +31,50 @@ class TestPodProcessManager:
         assert "ANTHROPIC_API_KEY" in env_names
 
     @pytest.mark.asyncio
+    async def test_pod_spec_uses_pvc(self):
+        """Pod spec mounts sessions PVC instead of emptyDir."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest", sessions_pvc="console-sessions")
+        spec = mgr.build_pod_spec(project="proj", user="user", role="architect", env_vars={})
+        volumes = spec["spec"]["volumes"]
+        sessions_vol = next(v for v in volumes if v["name"] == "sessions")
+        assert "persistentVolumeClaim" in sessions_vol
+        assert sessions_vol["persistentVolumeClaim"]["claimName"] == "console-sessions"
+        # Should NOT have emptyDir for sessions
+        assert "emptyDir" not in sessions_vol
+
+    @pytest.mark.asyncio
+    async def test_pod_spec_has_ssh_secret(self):
+        """Pod spec mounts github-ssh secret for git clone."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        spec = mgr.build_pod_spec(project="proj", user="user", role="architect", env_vars={})
+        volumes = spec["spec"]["volumes"]
+        ssh_vol = next(v for v in volumes if v["name"] == "github-ssh")
+        assert ssh_vol["secret"]["secretName"] == "github-ssh"
+        # Volume mount should be readonly
+        mounts = spec["spec"]["containers"][0]["volumeMounts"]
+        ssh_mount = next(m for m in mounts if m["name"] == "github-ssh")
+        assert ssh_mount["readOnly"] is True
+        assert ssh_mount["mountPath"] == "/home/agent/.ssh"
+
+    @pytest.mark.asyncio
+    async def test_pod_spec_has_home_emptydir(self):
+        """Pod spec has ephemeral home volume for agent config."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        spec = mgr.build_pod_spec(project="proj", user="user", role="architect", env_vars={})
+        volumes = spec["spec"]["volumes"]
+        home_vol = next(v for v in volumes if v["name"] == "home")
+        assert "emptyDir" in home_vol
+
+    @pytest.mark.asyncio
+    async def test_pod_spec_custom_pvc_name(self):
+        """PVC name is configurable via constructor."""
+        mgr = PodProcessManager(namespace="ns", image="img:latest", sessions_pvc="custom-pvc")
+        spec = mgr.build_pod_spec(project="proj", user="user", role="architect", env_vars={})
+        volumes = spec["spec"]["volumes"]
+        sessions_vol = next(v for v in volumes if v["name"] == "sessions")
+        assert sessions_vol["persistentVolumeClaim"]["claimName"] == "custom-pvc"
+
+    @pytest.mark.asyncio
     async def test_pod_name_sanitized(self):
         """Pod name must be valid k8s label (lowercase, alphanumeric, hyphens)."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
@@ -52,7 +96,40 @@ class TestPodProcessManager:
         script = cmd[2]
         assert "--mode rpc" in script
         assert "--session-dir" in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_writes_pi_config(self):
+        """Exec command writes models.json and mcp.json inline."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(project="my-proj")
+        script = cmd[2]
         assert "models.json" in script
+        assert "mcp.json" in script
+        # Should NOT reference init.sh
+        assert "init.sh" not in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_includes_hydration(self):
+        """Exec command runs hydrate_context.py before Pi starts."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(project="my-proj")
+        script = cmd[2]
+        assert "hydrate_context.py" in script
+        assert "/sessions/my-proj/" in script
+        # Hydration output goes to stderr (stdout reserved for Pi RPC)
+        assert "1>&2" in script
+        # Non-fatal
+        assert "|| true" in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_includes_conditional_clone(self):
+        """Exec command clones repo if /tmp/repo_url exists and .git doesn't."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(project="my-proj")
+        script = cmd[2]
+        assert "git clone" in script
+        assert "/tmp/repo_url" in script
+        assert "! -d .git" in script
 
 
 class TestPodSession:

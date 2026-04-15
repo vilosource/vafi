@@ -107,22 +107,48 @@ class LockManager:
         logger.info(f"Released lock {key}")
         return True
 
-    async def list_locks(self) -> list[dict[str, Any]]:
-        """List all active locks."""
+    async def force_release(self, project: str, role: str) -> bool:
+        """Release a lock without ownership check. Used for cleanup on pod death."""
+        key = self._key(project, role)
+        existing = self._locks.get(key)
+        if not existing:
+            return False
+
+        if self.use_vtf and "vtf_pk" in existing:
+            from .vtf_locks import vtf_release_lock
+            try:
+                await vtf_release_lock(existing["vtf_pk"])
+            except Exception as e:
+                logger.warning(f"Failed to release vtf lock {existing['vtf_pk']}: {e}")
+
+        del self._locks[key]
+        self._sessions.pop(key, None)
+        logger.info(f"Force-released lock {key}")
+        return True
+
+    async def list_locks(self, project_id: str | None = None, role: str | None = None) -> list[dict[str, Any]]:
+        """List active locks, optionally filtered by project and/or role."""
         if self.use_vtf:
             from .vtf_locks import vtf_list_locks
-            return await vtf_list_locks()
+            locks = await vtf_list_locks(project_id=project_id)
+            if role:
+                locks = [l for l in locks if l.get("role") == role]
+            return locks
 
-        return [
-            {
+        result = []
+        for v in self._locks.values():
+            if project_id and v["project"] != project_id:
+                continue
+            if role and v["role"] != role:
+                continue
+            result.append({
                 "project": v["project"],
                 "role": v["role"],
                 "user": v["username"],
                 "session_id": v["session_id"],
                 "locked_at": v["locked_at"],
-            }
-            for v in self._locks.values()
-        ]
+            })
+        return result
 
     def get_expired_locks(self) -> list[dict[str, Any]]:
         """Return locks that have exceeded idle timeout."""
@@ -132,11 +158,17 @@ class LockManager:
             if now - lock["last_activity"] > self.idle_timeout_seconds
         ]
 
-    def cleanup_expired(self) -> int:
-        """Remove expired locks. Returns count of cleaned."""
+    async def cleanup_expired(self) -> int:
+        """Remove expired locks (including VTF). Returns count of cleaned."""
         expired = self.get_expired_locks()
         for lock in expired:
             key = self._key(lock["project"], lock["role"])
+            if self.use_vtf and "vtf_pk" in lock:
+                from .vtf_locks import vtf_release_lock
+                try:
+                    await vtf_release_lock(lock["vtf_pk"])
+                except Exception as e:
+                    logger.warning(f"Failed to release expired vtf lock {lock['vtf_pk']}: {e}")
             del self._locks[key]
             self._sessions.pop(key, None)
             logger.info(f"Expired lock {key} (user: {lock['username']})")

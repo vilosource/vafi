@@ -17,6 +17,10 @@ USER root
 RUN pip install --break-system-packages /opt/vf-agent/
 USER agent
 
+# Copy agent scripts
+COPY images/agent/pi_config.py /opt/vf-agent/pi_config.py
+COPY images/agent/hydrate_context.py /opt/vf-agent/hydrate_context.py
+
 # Copy entrypoint script
 COPY images/agent/entrypoint.sh /opt/vf-agent/entrypoint.sh
 USER root

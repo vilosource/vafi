@@ -106,6 +106,20 @@ class TestBuildPiEnv:
         assert "PI_OTEL_ENDPOINT" not in env
         assert "VF_VTF_MCP_URL" not in env
 
+    def test_includes_vtf_api_url(self):
+        env = build_pi_env(
+            project="p", role="r",
+            vtf_api_url="http://vtf-api:8000",
+        )
+        assert env["VTF_API_URL"] == "http://vtf-api:8000"
+
+    def test_omits_vtf_api_url_when_empty(self):
+        env = build_pi_env(
+            project="p", role="r",
+            vtf_api_url="",
+        )
+        assert "VTF_API_URL" not in env
+
 
 class TestPiSession:
     def test_build_command_uses_rpc_mode(self):

@@ -17,41 +17,8 @@ if [ "$HARNESS" = "pi" ]; then
         echo "Warning: No methodology found for role '$AGENT_ROLE'"
     fi
 
-    # Write Pi config files from environment
-    mkdir -p /home/agent/.pi/agent
-    python3 -c "
-import json, os
-
-# models.json — provider, model, baseUrl for z.ai proxy
-provider = os.environ.get('VF_PI_PROVIDER', 'anthropic')
-model = os.environ.get('VF_PI_MODEL', 'claude-sonnet-4-20250514')
-base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
-api_key_env = 'ANTHROPIC_API_KEY'
-
-provider_cfg = {
-    'api': 'anthropic-messages',
-    'apiKey': api_key_env,
-    'models': [{'id': model, 'name': model}],
-}
-if base_url:
-    provider_cfg['baseUrl'] = base_url
-
-models = {'providers': {provider: provider_cfg}}
-with open(os.path.expanduser('~/.pi/agent/models.json'), 'w') as f:
-    json.dump(models, f, indent=2)
-
-# mcp.json — vtf and cxdb MCP endpoints
-vtf_mcp = os.environ.get('VF_VTF_MCP_URL', '')
-cxdb_mcp = os.environ.get('VF_CXDB_MCP_URL', '')
-servers = {}
-if vtf_mcp:
-    servers['vtf'] = {'url': vtf_mcp, 'lifecycle': 'lazy'}
-if cxdb_mcp:
-    servers['cxdb'] = {'url': cxdb_mcp, 'lifecycle': 'lazy'}
-if servers:
-    with open(os.path.expanduser('~/.pi/agent/mcp.json'), 'w') as f:
-        json.dump({'mcpServers': servers}, f, indent=2)
-" 2>&1 && echo "Wrote Pi config files" || echo "Warning: failed to write Pi config"
+    # Write Pi config files from environment (shared script)
+    python3 /opt/vf-agent/pi_config.py 2>&1 || echo "Warning: failed to write Pi config"
 
 else
     # Claude: copy methodology to CLAUDE.md
@@ -149,6 +116,15 @@ with open(cfg_path, 'w') as f:
 SETTINGS
     echo "Wrote ~/.claude/settings.json"
     fi  # end HARNESS != pi
+
+    # Hydrate project context from VTF API
+    if [ -n "${VTF_API_URL:-}" ] && [ -n "${VF_VTF_TOKEN:-}" ] && [ -n "${VTF_PROJECT_SLUG:-}" ]; then
+        python3 /opt/vf-agent/hydrate_context.py "$WORKDIR" 2>&1 || true
+        # Resolve repo URL from project data if not set via env
+        if [ -z "$REPO_URL" ] && [ -f /tmp/repo_url ]; then
+            REPO_URL=$(cat /tmp/repo_url)
+        fi
+    fi
 
     # Clone project repo if URL provided, otherwise create empty workdir
     if [ -n "$REPO_URL" ]; then
