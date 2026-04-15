@@ -442,6 +442,12 @@ class PodSession:
                 event = parse_pi_event(line)
                 if event and event.type == "agent_end":
                     break
+                # Pi doesn't send agent_end per prompt in locked RPC mode.
+                # Detect completion via final assistant message with stopReason.
+                if event and event.type == "message":
+                    msg = event.data.get("message", {})
+                    if msg.get("role") == "assistant" and msg.get("stopReason") in ("stop", "end_turn"):
+                        break
 
     async def shutdown(self) -> None:
         """Send shutdown command to Pi and stop reader."""

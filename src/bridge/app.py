@@ -502,6 +502,7 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                 raise HTTPException(status_code=503, detail="Session expired. Please reconnect.")
 
             async def generate_locked():
+                num_turns = 0
                 async for line in pod_session.stream_prompt(body.message):
                     event = parse_pi_event(line)
                     if event is None:
@@ -515,6 +516,16 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                             delta = ae.get("delta", "")
                             if delta:
                                 yield json.dumps({"type": "text_delta", "text": delta}) + "\n"
+                    elif event.type == "tool_execution_start":
+                        tool_name = event.data.get("toolName", "unknown")
+                        yield json.dumps({"type": "tool_use", "tool": tool_name, "status": "started"}) + "\n"
+                    elif event.type == "tool_execution_end":
+                        tool_name = event.data.get("toolName", "unknown")
+                        yield json.dumps({"type": "tool_use", "tool": tool_name, "status": "completed"}) + "\n"
+                    elif event.type == "turn_end":
+                        num_turns += 1
+                    elif event.type == "error":
+                        yield json.dumps({"type": "error", "message": event.data.get("message", "unknown error")}) + "\n"
                     elif event.type == "agent_end":
                         messages = event.data.get("messages", [])
                         for msg in reversed(messages):
@@ -522,8 +533,23 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                                 content = msg.get("content", [])
                                 final_text = content[-1].get("text", "") if content else ""
                                 usage = msg.get("usage", {})
-                                yield json.dumps({"type": "result", "result": final_text, "session_id": pod_session.session_id or "", "input_tokens": usage.get("input", 0), "output_tokens": usage.get("output", 0), "num_turns": 0}) + "\n"
+                                yield json.dumps({"type": "result", "result": final_text, "session_id": pod_session.session_id or "", "input_tokens": usage.get("input", 0), "output_tokens": usage.get("output", 0), "num_turns": num_turns}) + "\n"
                                 break
+                        break
+                    elif event.type == "message":
+                        # Pi doesn't send agent_end per prompt in locked RPC mode.
+                        # Detect completion via final assistant message with stopReason.
+                        msg = event.data.get("message", {})
+                        if msg.get("role") == "assistant" and msg.get("stopReason") in ("stop", "end_turn"):
+                            content = msg.get("content", [])
+                            final_text = ""
+                            for c in reversed(content):
+                                if c.get("type") == "text":
+                                    final_text = c.get("text", "")
+                                    break
+                            usage = msg.get("usage", {})
+                            yield json.dumps({"type": "result", "result": final_text, "session_id": pod_session.session_id or "", "input_tokens": usage.get("input", 0), "output_tokens": usage.get("output", 0), "num_turns": num_turns}) + "\n"
+                            break
                 lock_manager.touch(body.project, body.role)
 
             return StreamingResponse(generate_locked(), media_type="application/x-ndjson")

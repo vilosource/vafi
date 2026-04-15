@@ -172,3 +172,100 @@ class TestPodSession:
         await session.initialize()
 
         assert session.session_id == "from-get-state"
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_breaks_on_message_stop(self):
+        """stream_prompt terminates when assistant message has stopReason='stop'."""
+        session = PodSession(ws=AsyncMock(), session_id="sess-1")
+        session._alive = True
+
+        events = [
+            json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "Hi"}}),
+            json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi"}], "stopReason": "stop", "usage": {"input": 10, "output": 2}}}),
+            # This should NOT be yielded — stream should have broken already
+            json.dumps({"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "next"}]}}),
+        ]
+        for e in events:
+            await session._event_queue.put(e)
+
+        collected = []
+        async for line in session.stream_prompt("hello"):
+            collected.append(line)
+
+        # Should have: session event + 2 yielded lines (message_update + message with stop)
+        # The third event (user message) should NOT appear
+        types = [json.loads(l).get("type") for l in collected]
+        assert "session" in types  # session_id yield
+        assert "message_update" in types
+        assert any(
+            json.loads(l).get("type") == "message"
+            and json.loads(l).get("message", {}).get("stopReason") == "stop"
+            for l in collected
+        )
+        # The user message after stop should NOT be in collected
+        assert not any(
+            json.loads(l).get("message", {}).get("role") == "user"
+            for l in collected
+        )
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_breaks_on_agent_end(self):
+        """stream_prompt still terminates on agent_end (backward compatible)."""
+        session = PodSession(ws=AsyncMock(), session_id="sess-1")
+        session._alive = True
+
+        events = [
+            json.dumps({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "Done"}], "usage": {"input": 10, "output": 2}}]}),
+            json.dumps({"type": "should_not_appear"}),
+        ]
+        for e in events:
+            await session._event_queue.put(e)
+
+        collected = []
+        async for line in session.stream_prompt("hello"):
+            collected.append(line)
+
+        types = [json.loads(l).get("type") for l in collected]
+        assert "agent_end" in types
+        assert "should_not_appear" not in types
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_breaks_on_end_turn(self):
+        """stream_prompt terminates on stopReason='end_turn' as well."""
+        session = PodSession(ws=AsyncMock(), session_id="sess-1")
+        session._alive = True
+
+        events = [
+            json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}], "stopReason": "end_turn", "usage": {"input": 5, "output": 1}}}),
+        ]
+        for e in events:
+            await session._event_queue.put(e)
+
+        collected = []
+        async for line in session.stream_prompt("hi"):
+            collected.append(line)
+
+        # Should terminate cleanly with session + message
+        assert len(collected) == 2  # session yield + message
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_does_not_break_on_tooluse_message(self):
+        """stream_prompt does NOT break on assistant message with stopReason='toolUse'."""
+        session = PodSession(ws=AsyncMock(), session_id="sess-1")
+        session._alive = True
+
+        events = [
+            json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "toolCall"}], "stopReason": "toolUse"}}),
+            json.dumps({"type": "message", "message": {"role": "toolResult", "content": [{"type": "text", "text": "result"}]}}),
+            json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "Done"}], "stopReason": "stop", "usage": {"input": 10, "output": 5}}}),
+        ]
+        for e in events:
+            await session._event_queue.put(e)
+
+        collected = []
+        async for line in session.stream_prompt("do something"):
+            collected.append(line)
+
+        # All 3 events should be yielded (plus session), then break on stop
+        types = [json.loads(l).get("type") for l in collected]
+        assert types.count("message") == 3  # toolUse msg + toolResult + stop msg
