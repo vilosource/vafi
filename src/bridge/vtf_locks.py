@@ -32,6 +32,18 @@ async def vtf_acquire_lock(project_id: str, role: str, session_id: str = "") -> 
             raise Exception(f"vtf lock acquire failed: {resp.status_code} {resp.text}")
 
 
+async def vtf_update_lock(lock_pk: int, session_id: str) -> bool:
+    """PATCH /v1/locks/<pk>/ — update session_id after Pi handshake."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"{VTF_API_URL}/v1/locks/{lock_pk}/",
+            headers={"Authorization": f"Token {VTF_API_TOKEN}"},
+            json={"session_id": session_id},
+            timeout=10,
+        )
+        return resp.status_code == 200
+
+
 async def vtf_release_lock(lock_pk: int) -> bool:
     """DELETE /v1/locks/<pk>/ — release a lock in vtf."""
     async with httpx.AsyncClient() as client:

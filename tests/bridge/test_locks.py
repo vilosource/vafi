@@ -187,3 +187,39 @@ class TestLockEndpoints:
                 headers={"Authorization": "Token valid"},
             )
             assert resp.status_code == 409
+
+
+class TestVtfLockSync:
+    """Tests for vtf_update_lock session_id sync."""
+
+    @pytest.fixture(autouse=True)
+    def mock_pod_creation(self):
+        """Override the module-level autouse fixture — these tests don't need pod mocks."""
+        yield
+
+    @pytest.mark.asyncio
+    async def test_vtf_update_lock_calls_patch(self):
+        """vtf_update_lock sends PATCH with session_id."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        with patch("httpx.AsyncClient.patch", new_callable=AsyncMock, return_value=mock_resp) as mock_patch:
+            from bridge.vtf_locks import vtf_update_lock
+            result = await vtf_update_lock(42, "real-sess-123")
+
+            assert result is True
+            mock_patch.assert_called_once()
+            call_kwargs = mock_patch.call_args
+            assert "session_id" in str(call_kwargs)
+            assert "/v1/locks/42/" in str(call_kwargs)
+
+    @pytest.mark.asyncio
+    async def test_vtf_update_lock_returns_false_on_failure(self):
+        """vtf_update_lock returns False on non-200."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+
+        with patch("httpx.AsyncClient.patch", new_callable=AsyncMock, return_value=mock_resp):
+            from bridge.vtf_locks import vtf_update_lock
+            result = await vtf_update_lock(999, "x")
+            assert result is False

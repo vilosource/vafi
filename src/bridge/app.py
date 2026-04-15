@@ -434,6 +434,13 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             # Update lock with real session_id from Pi
             if pod_session.session_id:
                 lock["session_id"] = pod_session.session_id
+                # Sync to vtf database so heartbeat checks match
+                if lock_manager.use_vtf and lock.get("vtf_pk"):
+                    from .vtf_locks import vtf_update_lock
+                    try:
+                        await vtf_update_lock(lock["vtf_pk"], pod_session.session_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to sync session_id to vtf: {e}")
 
         except Exception as e:
             logger.error(f"Failed to create pod session: {e}")
