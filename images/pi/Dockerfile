@@ -29,6 +29,11 @@ RUN mkdir -p /home/agent/.pi/agent && \
     cp /root/.pi/agent/settings.json /home/agent/.pi/agent/settings.json && \
     chown -R agent:agent /home/agent/.pi/agent
 
+# Allow agent to reinstall/update pi-mcp-adapter at runtime without EACCES.
+# Pi's package-manager runs `npm install -g` on referenced packages which
+# needs write access to the npm global prefix.
+RUN chown -R agent:agent /usr/local/lib/node_modules /usr/local/bin
+
 USER agent
 
 # Verify
