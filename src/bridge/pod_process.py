@@ -60,6 +60,27 @@ class PodProcessManager:
                 },
             },
             "spec": {
+                "initContainers": [{
+                    # Same pattern as executor-deployment.yaml: copy keys
+                    # from readonly secret mount to an emptyDir with the
+                    # filenames git expects (id_ed25519), plus a config
+                    # that disables StrictHostKeyChecking so git clone
+                    # doesn't hang waiting for interactive host key confirm.
+                    "name": "setup-ssh",
+                    "image": self.image,
+                    "command": ["sh", "-c", (
+                        "cp /ssh-secret/ssh-privatekey /ssh-ready/id_ed25519 && "
+                        "cp /ssh-secret/ssh-publickey /ssh-ready/id_ed25519.pub && "
+                        "chmod 600 /ssh-ready/id_ed25519 && "
+                        "chmod 644 /ssh-ready/id_ed25519.pub && "
+                        "echo 'StrictHostKeyChecking no' > /ssh-ready/config && "
+                        "chmod 644 /ssh-ready/config"
+                    )],
+                    "volumeMounts": [
+                        {"name": "github-ssh", "mountPath": "/ssh-secret", "readOnly": True},
+                        {"name": "ssh-ready", "mountPath": "/ssh-ready"},
+                    ],
+                }],
                 "containers": [{
                     "name": "pi-agent",
                     "image": self.image,
@@ -72,7 +93,7 @@ class PodProcessManager:
                     },
                     "volumeMounts": [
                         {"name": "sessions", "mountPath": "/sessions"},
-                        {"name": "github-ssh", "mountPath": "/home/agent/.ssh", "readOnly": True},
+                        {"name": "ssh-ready", "mountPath": "/home/agent/.ssh"},
                     ],
                 }],
                 "volumes": [
@@ -84,6 +105,7 @@ class PodProcessManager:
                         "name": "github-ssh",
                         "secret": {"secretName": "github-ssh", "defaultMode": 0o400},
                     },
+                    {"name": "ssh-ready", "emptyDir": {}},
                 ],
                 "restartPolicy": "Never",
                 "imagePullSecrets": [{"name": "harbor-registry"}],

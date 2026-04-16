@@ -46,17 +46,27 @@ class TestPodProcessManager:
 
     @pytest.mark.asyncio
     async def test_pod_spec_has_ssh_secret(self):
-        """Pod spec mounts github-ssh secret for git clone."""
+        """Pod spec mounts github-ssh secret and runs init container to prep ~/.ssh."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
         spec = mgr.build_pod_spec(project="proj", user="user", role="architect", env_vars={})
+
+        # github-ssh secret mounted readonly into the init container
         volumes = spec["spec"]["volumes"]
         ssh_vol = next(v for v in volumes if v["name"] == "github-ssh")
         assert ssh_vol["secret"]["secretName"] == "github-ssh"
-        # Volume mount should be readonly
+
+        # Init container copies keys to id_ed25519 and writes StrictHostKeyChecking=no
+        init = spec["spec"]["initContainers"][0]
+        assert init["name"] == "setup-ssh"
+        init_cmd = init["command"][-1]
+        assert "id_ed25519" in init_cmd
+        assert "StrictHostKeyChecking no" in init_cmd
+
+        # Main container sees the prepared keys at ~/.ssh (emptyDir ssh-ready),
+        # not the raw secret mount.
         mounts = spec["spec"]["containers"][0]["volumeMounts"]
-        ssh_mount = next(m for m in mounts if m["name"] == "github-ssh")
-        assert ssh_mount["readOnly"] is True
-        assert ssh_mount["mountPath"] == "/home/agent/.ssh"
+        ssh_mount = next(m for m in mounts if m["mountPath"] == "/home/agent/.ssh")
+        assert ssh_mount["name"] == "ssh-ready"
 
     @pytest.mark.asyncio
     async def test_pod_spec_has_home_emptydir(self):
