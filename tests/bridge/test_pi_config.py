@@ -13,12 +13,33 @@ import pi_config
 
 
 class TestPiConfig:
-    def test_writes_settings_json(self, tmp_path):
+    def test_writes_settings_json_with_mcp_adapter(self, tmp_path):
         with patch.dict(os.environ, {}, clear=False):
             with patch("pi_config.Path.home", return_value=tmp_path):
                 pi_config.main()
         settings = json.loads((tmp_path / ".pi" / "agent" / "settings.json").read_text())
-        assert settings == {"packages": []}
+        assert "npm:pi-mcp-adapter" in settings["packages"]
+
+    def test_preserves_existing_packages(self, tmp_path):
+        """Don't overwrite packages already registered (e.g. by `pi install` at image build)."""
+        settings_path = tmp_path / ".pi" / "agent" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(json.dumps({"packages": ["npm:pi-mcp-adapter", "npm:other"]}))
+        with patch.dict(os.environ, {}, clear=False):
+            with patch("pi_config.Path.home", return_value=tmp_path):
+                pi_config.main()
+        settings = json.loads(settings_path.read_text())
+        assert "npm:pi-mcp-adapter" in settings["packages"]
+        assert "npm:other" in settings["packages"]
+
+    def test_idempotent_settings(self, tmp_path):
+        """Running twice doesn't duplicate pi-mcp-adapter entry."""
+        with patch.dict(os.environ, {}, clear=False):
+            with patch("pi_config.Path.home", return_value=tmp_path):
+                pi_config.main()
+                pi_config.main()
+        settings = json.loads((tmp_path / ".pi" / "agent" / "settings.json").read_text())
+        assert settings["packages"].count("npm:pi-mcp-adapter") == 1
 
     def test_writes_models_json_defaults(self, tmp_path):
         with patch.dict(os.environ, {"ANTHROPIC_BASE_URL": ""}, clear=False):
@@ -48,6 +69,31 @@ class TestPiConfig:
         mcp = json.loads((tmp_path / ".pi" / "agent" / "mcp.json").read_text())
         assert mcp["mcpServers"]["vtf"]["url"] == "http://vtf-mcp:8002/mcp"
         assert mcp["mcpServers"]["cxdb"]["url"] == "http://cxdb-mcp:8090/mcp"
+
+    def test_mcp_json_vtf_auth_headers(self, tmp_path):
+        """vtf MCP requires Authorization: Token <key>; optionally X-VTF-Project."""
+        with patch.dict(os.environ, {
+            "VF_VTF_MCP_URL": "http://vtf-mcp:8002/mcp",
+            "VF_VTF_TOKEN": "secret-token-abc",
+            "VTF_PROJECT_SLUG": "my-project",
+        }, clear=False):
+            with patch("pi_config.Path.home", return_value=tmp_path):
+                pi_config.main()
+        mcp = json.loads((tmp_path / ".pi" / "agent" / "mcp.json").read_text())
+        vtf = mcp["mcpServers"]["vtf"]
+        assert vtf["headers"]["Authorization"] == "Token secret-token-abc"
+        assert vtf["headers"]["X-VTF-Project"] == "my-project"
+
+    def test_mcp_json_vtf_no_headers_without_token(self, tmp_path):
+        """URL without token writes no headers (fails open — caller sees 401)."""
+        with patch.dict(os.environ, {
+            "VF_VTF_MCP_URL": "http://vtf-mcp:8002/mcp",
+            "VF_VTF_TOKEN": "",
+        }, clear=False):
+            with patch("pi_config.Path.home", return_value=tmp_path):
+                pi_config.main()
+        mcp = json.loads((tmp_path / ".pi" / "agent" / "mcp.json").read_text())
+        assert "headers" not in mcp["mcpServers"]["vtf"]
 
     def test_no_mcp_json_when_no_urls(self, tmp_path):
         with patch.dict(os.environ, {"VF_VTF_MCP_URL": "", "VF_CXDB_MCP_URL": ""}, clear=False):
