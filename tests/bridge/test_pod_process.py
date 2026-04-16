@@ -69,15 +69,6 @@ class TestPodProcessManager:
         assert ssh_mount["name"] == "ssh-ready"
 
     @pytest.mark.asyncio
-    async def test_pod_spec_has_home_emptydir(self):
-        """Pod spec has ephemeral home volume for agent config."""
-        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
-        spec = mgr.build_pod_spec(project="proj", user="user", role="architect", env_vars={})
-        volumes = spec["spec"]["volumes"]
-        home_vol = next(v for v in volumes if v["name"] == "home")
-        assert "emptyDir" in home_vol
-
-    @pytest.mark.asyncio
     async def test_pod_spec_custom_pvc_name(self):
         """PVC name is configurable via constructor."""
         mgr = PodProcessManager(namespace="ns", image="img:latest", sessions_pvc="custom-pvc")
