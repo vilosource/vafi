@@ -86,10 +86,55 @@ judge:
     failureThreshold: 3
 
 # ---------------------------------------------------------------------------
+# Bridge — REST+WebSocket service that brokers console→agent-pod sessions
+# ---------------------------------------------------------------------------
+bridge:
+  enabled: true
+  replicas: 1
+  image:
+    repository: harbor.viloforge.com/vafi/vafi-bridge
+    tag: latest
+    pullPolicy: Always
+  # Image used for locked agent pods (architect/web_designer) spawned by the bridge
+  agentPiImage: "harbor.viloforge.com/vafi/vafi-agent-pi:latest"
+  service:
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+  rolesConfig: |
+    roles:
+      architect:
+        session_type: locked
+        model: claude-sonnet-4-20250514
+        thinking_level: medium
+        methodology: /opt/vf-agent/methodologies/architect.md
+        mcp_tools:
+          - vtf
+          - cxdb
+        idle_timeout_hours: 4
+        description: Interactive planning and design sessions
+
+      assistant:
+        session_type: ephemeral
+        model: claude-sonnet-4-20250514
+        thinking_level: low
+        methodology: ""
+        mcp_tools:
+          - vtf
+          - cxdb
+        description: Task management, status queries, quick operations
+
+# ---------------------------------------------------------------------------
 # vtf — task tracker API that the executor polls for work
 # ---------------------------------------------------------------------------
 vtf:
   apiUrl: ""               # required — in-cluster vtf API URL
+  mcpUrl: ""               # required for bridge — in-cluster vtf MCP URL (e.g. http://vtf-mcp.<ns>.svc.cluster.local:8002/mcp)
 
 # ---------------------------------------------------------------------------
 # CXDB — execution trace store (disable if not using trace collection)

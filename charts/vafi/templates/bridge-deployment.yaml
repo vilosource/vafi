@@ -1,0 +1,131 @@
+{{- if .Values.bridge.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vafi.fullname" . }}-bridge
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vafi.fullname" . }}-bridge-pod-manager
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vafi.fullname" . }}-bridge-pod-manager
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vafi.fullname" . }}-bridge-pod-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vafi.fullname" . }}-bridge
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bridge-roles
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+data:
+  roles.yaml: |
+    {{- .Values.bridge.rolesConfig | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vafi.fullname" . }}-bridge
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.bridge.service.port }}
+      targetPort: {{ .Values.bridge.service.port }}
+  selector:
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vafi.fullname" . }}-bridge
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 4 }}
+spec:
+  replicas: {{ .Values.bridge.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vafi.labels" . | nindent 8 }}
+        {{- include "vafi.selectorLabels" (dict "root" . "component" "bridge") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "vafi.fullname" . }}-bridge
+      containers:
+        - name: vafi-bridge
+          image: "{{ .Values.bridge.image.repository }}:{{ .Values.bridge.image.tag }}"
+          imagePullPolicy: {{ .Values.bridge.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.bridge.service.port }}
+          env:
+            - name: VTF_API_URL
+              value: {{ .Values.vtf.apiUrl | quote }}
+            - name: VTF_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vafi.secretName" . }}
+                  key: vtf-token
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vafi.secretName" . }}
+                  key: anthropic-auth-token
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vafi.secretName" . }}
+                  key: anthropic-base-url
+            - name: ROLES_CONFIG
+              value: /app/config/roles.yaml
+            - name: AGENT_PI_IMAGE
+              value: {{ .Values.bridge.agentPiImage | quote }}
+            - name: VTF_MCP_URL
+              value: {{ .Values.vtf.mcpUrl | quote }}
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: {{ .Values.bridge.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.bridge.resources | nindent 12 }}
+          volumeMounts:
+            - name: roles-config
+              mountPath: /app/config
+      volumes:
+        - name: roles-config
+          configMap:
+            name: bridge-roles
+{{- end }}
