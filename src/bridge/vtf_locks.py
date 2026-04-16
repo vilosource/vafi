@@ -12,13 +12,16 @@ VTF_API_URL = os.environ.get("VTF_API_URL", "http://vtf-api.vtf-dev.svc.cluster.
 VTF_API_TOKEN = os.environ.get("VTF_API_TOKEN", "")
 
 
-async def vtf_acquire_lock(project_id: str, role: str, session_id: str = "") -> dict[str, Any]:
+async def vtf_acquire_lock(project_id: str, role: str, session_id: str = "", user_id: int | None = None) -> dict[str, Any]:
     """POST /v1/locks/ — acquire or reconnect a lock in vtf."""
+    body: dict[str, Any] = {"project_id": project_id, "role": role, "session_id": session_id}
+    if user_id is not None:
+        body["user_id"] = user_id
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{VTF_API_URL}/v1/locks/",
             headers={"Authorization": f"Token {VTF_API_TOKEN}"},
-            json={"project_id": project_id, "role": role, "session_id": session_id},
+            json=body,
             timeout=10,
         )
         if resp.status_code == 200:

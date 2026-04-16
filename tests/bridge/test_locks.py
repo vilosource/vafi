@@ -223,3 +223,57 @@ class TestVtfLockSync:
             from bridge.vtf_locks import vtf_update_lock
             result = await vtf_update_lock(999, "x")
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_vtf_acquire_lock_passes_user_id(self):
+        """R8: vtf_acquire_lock includes user_id in POST body when provided."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"id": 1, "session_id": "", "project_id": "proj-1", "role": "architect"}
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+            from bridge.vtf_locks import vtf_acquire_lock
+            await vtf_acquire_lock("proj-1", "architect", user_id=42)
+
+            mock_post.assert_called_once()
+            call_kwargs = mock_post.call_args
+            body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+            assert body["user_id"] == 42
+
+    @pytest.mark.asyncio
+    async def test_vtf_acquire_lock_omits_user_id_when_none(self):
+        """vtf_acquire_lock does not include user_id when not provided."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"id": 1, "session_id": "", "project_id": "proj-1", "role": "architect"}
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+            from bridge.vtf_locks import vtf_acquire_lock
+            await vtf_acquire_lock("proj-1", "architect")
+
+            call_kwargs = mock_post.call_args
+            body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+            assert "user_id" not in body
+
+
+class TestLockManagerVtfUserIdProxy:
+    """R8: _acquire_vtf passes user_id to vtf_acquire_lock."""
+
+    @pytest.fixture(autouse=True)
+    def mock_pod_creation(self):
+        """Override module-level autouse fixture."""
+        yield
+
+    @pytest.mark.asyncio
+    async def test_acquire_vtf_passes_user_id(self):
+        """LockManager._acquire_vtf forwards user['user_id'] to vtf_acquire_lock."""
+        lm = LockManager(use_vtf=True)
+        user = _mock_user(user_id=42, username="admin")
+
+        mock_vtf_lock = {"id": 1, "session_id": "", "project_id": "proj-1", "role": "architect", "created_at": ""}
+
+        with patch("bridge.vtf_locks.vtf_acquire_lock", new_callable=AsyncMock, return_value=mock_vtf_lock) as mock_acquire:
+            lock = await lm._acquire_vtf(user, "proj-1", "architect", "proj-1:architect")
+            mock_acquire.assert_called_once_with("proj-1", "architect", user_id=42)
+            assert lock["user_id"] == 42
+            assert lock["username"] == "admin"

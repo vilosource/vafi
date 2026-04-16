@@ -71,7 +71,7 @@ class LockManager:
             return existing
 
         try:
-            vtf_lock = await vtf_acquire_lock(project, role)
+            vtf_lock = await vtf_acquire_lock(project, role, user_id=user["user_id"])
             lock = {
                 "session_id": vtf_lock.get("session_id", ""),
                 "project": project,

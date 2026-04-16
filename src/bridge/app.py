@@ -221,7 +221,7 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                         "session_id": pod_session.session_id or vtf_lock.get("session_id", ""),
                         "project": project,
                         "role": role_name,
-                        "user_id": 0,  # Unknown from vtf list response
+                        "user_id": vtf_lock.get("user_id", 0),
                         "username": username,
                         "locked_at": vtf_lock.get("created_at", ""),
                         "last_activity": time.monotonic(),
