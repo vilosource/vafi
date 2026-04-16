@@ -101,13 +101,12 @@ class TestPodProcessManager:
 
     @pytest.mark.asyncio
     async def test_exec_command_writes_pi_config(self):
-        """Exec command writes models.json and mcp.json inline."""
+        """Exec command delegates to pi_config.py (writes models.json, mcp.json)."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
         cmd = mgr.build_exec_command(project="my-proj")
         script = cmd[2]
-        assert "models.json" in script
-        assert "mcp.json" in script
-        # Should NOT reference init.sh
+        assert "pi_config.py" in script
+        # Should NOT reference init.sh (retired when pi_config was extracted)
         assert "init.sh" not in script
 
     @pytest.mark.asyncio
@@ -125,13 +124,36 @@ class TestPodProcessManager:
 
     @pytest.mark.asyncio
     async def test_exec_command_includes_conditional_clone(self):
-        """Exec command clones repo if /tmp/repo_url exists and .git doesn't."""
+        """Exec command clones repo into /sessions/{slug}/repo/ when repo_url present."""
         mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
         cmd = mgr.build_exec_command(project="my-proj")
         script = cmd[2]
         assert "git clone" in script
         assert "/tmp/repo_url" in script
-        assert "! -d .git" in script
+        # Clones into repo/ subdirectory (not session dir itself) so it
+        # doesn't collide with accumulating Pi .jsonl session files.
+        assert "/sessions/my-proj/repo/" in script
+        # Guard against re-clone when .git already exists in the repo/ subdir.
+        assert "repo/.git" in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_two_phase_hydrate(self):
+        """Hydrate runs twice: once for repo_url before clone, once for full context after."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(project="my-proj")
+        script = cmd[2]
+        assert "--repo-url-only" in script
+        # Full-context hydration points at the repo/ subdir so
+        # PROJECT_CONTEXT.md lands inside the cloned checkout.
+        assert "hydrate_context.py /sessions/my-proj/repo/" in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_cd_into_repo(self):
+        """Pi runs with cwd inside the repo so bash tools operate on project source."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(project="my-proj")
+        script = cmd[2]
+        assert "cd /sessions/my-proj/repo/ && exec pi" in script
 
 
 class TestPodSession:

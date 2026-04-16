@@ -104,9 +104,9 @@ class PodProcessManager:
         context, clones repo if needed, then starts Pi in RPC mode.
         """
         sanitized = _sanitize_k8s_name(project)
-        pi_args = "--mode rpc"
         session_dir = f"/sessions/{sanitized}/"
-        pi_args += f" --session-dir {session_dir} --provider {provider} --model {model}"
+        repo_dir = f"{session_dir}repo/"
+        pi_args = f"--mode rpc --session-dir {session_dir} --provider {provider} --model {model}"
         if methodology:
             pi_args += f" --append-system-prompt {methodology}"
         if thinking_level:
@@ -115,23 +115,33 @@ class PodProcessManager:
         # Write Pi config files (settings.json, models.json, mcp.json)
         pi_config = "python3 /opt/vf-agent/pi_config.py 1>&2"
 
-        # Hydrate project context from VTF API
-        hydrate = (
-            f"python3 /opt/vf-agent/hydrate_context.py"
-            f" /sessions/{sanitized}/ 1>&2 || true"
+        # Fetch /tmp/repo_url without writing PROJECT_CONTEXT.md yet
+        # (so the clone target can be an empty dir).
+        hydrate_repo_url = (
+            "python3 /opt/vf-agent/hydrate_context.py --repo-url-only 1>&2 || true"
         )
 
-        # Clone repo if hydration found a repo_url and .git doesn't exist yet
-        # Uses -- to prevent flag injection from repo URL
+        # Clone into a dedicated repo/ subdirectory so session .jsonl files
+        # (which accumulate in session_dir across sessions) don't collide
+        # with the clone target. Uses -- to prevent flag injection.
         clone = (
-            f"cd /sessions/{sanitized}/ &&"
-            f" if [ ! -d .git ] && [ -f /tmp/repo_url ]; then"
-            f" git clone --depth 1 -- \"$(cat /tmp/repo_url)\" . 1>&2 || true; fi"
+            f"mkdir -p {session_dir} &&"
+            f" if [ ! -d {repo_dir}.git ] && [ -f /tmp/repo_url ]; then"
+            f" git clone --depth 1 -- \"$(cat /tmp/repo_url)\" {repo_dir} 1>&2 || true; fi"
         )
 
+        # Now write PROJECT_CONTEXT.md into the cloned repo (or repo/ if no repo)
+        hydrate_context = (
+            f"mkdir -p {repo_dir} &&"
+            f" python3 /opt/vf-agent/hydrate_context.py {repo_dir} 1>&2 || true"
+        )
+
+        # Run Pi with its working directory inside the repo so bash tools
+        # (grep, find, cat) operate on the project source.
         return [
             "bash", "-c",
-            f"{pi_config}; {hydrate}; {clone}; exec pi {pi_args}",
+            f"{pi_config}; {hydrate_repo_url}; {clone}; {hydrate_context};"
+            f" cd {repo_dir} && exec pi {pi_args}",
         ]
 
     async def create_and_exec(

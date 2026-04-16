@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Hydrate project context from VTF API into the architect workdir.
 
-Usage: python3 hydrate_context.py /sessions/{project}/
+Usage:
+  python3 hydrate_context.py /sessions/{project}/
+  python3 hydrate_context.py --repo-url-only
 
 Reads env vars:
   VTF_API_URL       — VTF REST API base URL
@@ -9,8 +11,11 @@ Reads env vars:
   VTF_PROJECT_SLUG  — project NanoID
 
 Writes:
-  {workdir}/PROJECT_CONTEXT.md  — human-readable project summary
-  /tmp/repo_url                 — repo URL (if project has one)
+  {workdir}/PROJECT_CONTEXT.md  — human-readable project summary (default mode)
+  /tmp/repo_url                 — repo URL (both modes, if project has one)
+
+With --repo-url-only, skips PROJECT_CONTEXT.md so caller can run
+`git clone` into an empty target before filling in context.
 
 All failures are non-fatal — exits 0 with minimal context on error.
 Outputs to stderr only (stdout reserved for Pi RPC protocol).
@@ -128,11 +133,17 @@ def build_context_md(
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        log("Usage: hydrate_context.py <workdir>")
-        sys.exit(0)
+    repo_url_only = "--repo-url-only" in sys.argv[1:]
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
 
-    workdir = Path(sys.argv[1])
+    if repo_url_only:
+        workdir = None
+    else:
+        if not positional:
+            log("Usage: hydrate_context.py <workdir> | --repo-url-only")
+            sys.exit(0)
+        workdir = Path(positional[0])
+
     api_url = os.environ.get("VTF_API_URL", "")
     token = os.environ.get("VF_VTF_TOKEN", "")
     project_slug = os.environ.get("VTF_PROJECT_SLUG", "")
@@ -141,8 +152,9 @@ def main() -> None:
         log("Missing VTF_API_URL, VF_VTF_TOKEN, or VTF_PROJECT_SLUG — skipping hydration")
         sys.exit(0)
 
-    # Ensure workdir exists
-    workdir.mkdir(parents=True, exist_ok=True)
+    # Ensure workdir exists (not needed for repo-url-only mode)
+    if workdir is not None:
+        workdir.mkdir(parents=True, exist_ok=True)
 
     base = api_url.rstrip("/")
     headers = {"Authorization": f"Token {token}", "Accept": "application/json"}
@@ -169,6 +181,23 @@ def main() -> None:
                     log(f"Resolved project (best match) to ID: {project_slug}")
 
         project_id = project.get("id", project_slug) if project else project_slug
+
+        # Always write /tmp/repo_url if we have one — both modes need it.
+        if project:
+            repo_url = (project.get("repo_url") or "").strip()
+            if repo_url:
+                import re
+                if re.match(r"^(https?://|git@|ssh://)[^\s;|&$`]+$", repo_url):
+                    Path("/tmp/repo_url").write_text(repo_url, encoding="utf-8")
+                    log(f"Project repo: {repo_url}")
+                else:
+                    log(f"Skipping invalid repo URL: {repo_url!r}")
+
+        # In repo-url-only mode, stop here — caller will git clone before
+        # running us again in full mode to write PROJECT_CONTEXT.md.
+        if repo_url_only:
+            return
+
         stats = fetch(client, f"/v1/projects/{project_id}/stats/")
 
         workplans_resp = fetch(client, f"/v1/projects/{project_id}/workplans/")
@@ -183,18 +212,6 @@ def main() -> None:
     context_path = workdir / "PROJECT_CONTEXT.md"
     context_path.write_text(content, encoding="utf-8")
     log(f"Wrote {context_path}")
-
-    # Write repo_url for entrypoint/exec to use for git clone
-    if project:
-        repo_url = (project.get("repo_url") or "").strip()
-        if repo_url:
-            # Validate URL format to prevent shell injection
-            import re
-            if re.match(r"^(https?://|git@|ssh://)[^\s;|&$`]+$", repo_url):
-                Path("/tmp/repo_url").write_text(repo_url, encoding="utf-8")
-                log(f"Project repo: {repo_url}")
-            else:
-                log(f"Skipping invalid repo URL: {repo_url!r}")
 
 
 if __name__ == "__main__":
