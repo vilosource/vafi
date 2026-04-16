@@ -102,8 +102,11 @@ class PodProcessManager:
                         "persistentVolumeClaim": {"claimName": self.sessions_pvc},
                     },
                     {
+                        # defaultMode 0o444 (not 0400) so the init container
+                        # running as uid 1001 can read the files to copy them
+                        # into the emptyDir with stricter perms.
                         "name": "github-ssh",
-                        "secret": {"secretName": "github-ssh", "defaultMode": 0o400},
+                        "secret": {"secretName": "github-ssh", "defaultMode": 0o444},
                     },
                     {"name": "ssh-ready", "emptyDir": {}},
                 ],
