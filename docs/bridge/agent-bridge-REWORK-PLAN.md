@@ -1,9 +1,17 @@
 # Agent Bridge Service — Rework Plan
 
+---
+status: completed
+last_verified: 2026-04-17
+---
+
 **Date:** 2026-04-02
+**Completed:** 2026-04-14 (Phase A+B), 2026-04-16 (Phase C chat widget rework)
 **Reason:** Implementation deviated from design. This plan corrects every deviation and completes all missing features per the original design.
 **Design:** vafi/docs/agent-bridge-service-DESIGN.md
 **Rule:** Follow the design. No stubs. No shortcuts. Improvements require explicit approval before implementation.
+
+> **Phase A and B are complete.** Phase C chat widget: see [chat-widget-REWORK-PLAN.md](chat-widget-REWORK-PLAN.md). Slack adapter is deferred.
 
 ## What went wrong
 
@@ -315,30 +323,30 @@ Per design dependency graph, Phase C can start after Phase A step 6. Not in scop
 Run at the end of Phase B:
 
 **Phase A (all green):**
-- [ ] `test_e2e_health` — real counts
-- [ ] `test_e2e_auth_enforcement` — 401/403/200
-- [ ] `test_e2e_ephemeral_prompt` — real Pi --mode rpc
-- [ ] `test_e2e_streaming_prompt` — NDJSON with agent_event type
-- [ ] `test_e2e_rate_limit` — 429 after 10/min
-- [ ] `test_e2e_sessions_endpoint` — SessionRecord exists
-- [ ] `test_e2e_project_required` — 422 without project
+- [x] `test_e2e_health` — real counts
+- [x] `test_e2e_auth_enforcement` — 401/403/200
+- [x] `test_e2e_ephemeral_prompt` — real Pi --mode rpc
+- [x] `test_e2e_streaming_prompt` — NDJSON with agent_event type
+- [x] `test_e2e_rate_limit` — 429 after 10/min
+- [x] `test_e2e_sessions_endpoint` — SessionRecord exists
+- [x] `test_e2e_project_required` — 422 without project
 
 **Phase B (all green):**
-- [ ] `test_e2e_lock_acquire_spawns_pod` — pod in k8s
-- [ ] `test_e2e_locked_prompt` — multi-turn continuity
-- [ ] `test_e2e_locked_prompt_stream` — NDJSON from locked session
-- [ ] `test_e2e_lock_contention` — 409 then success
-- [ ] `test_e2e_lock_release_pod_stays` — pod alive after release
-- [ ] `test_e2e_lock_reconnect` — resume conversation
-- [ ] `test_e2e_lock_persisted_in_vtf` — vtf AgentLock lifecycle
-- [ ] `test_e2e_idle_timeout` — auto-release
-- [ ] `test_e2e_health_with_locked` — pi_processes array
-- [ ] `test_e2e_recovery` — bridge restart preserves locks
+- [x] `test_e2e_lock_acquire_spawns_pod` — pod in k8s
+- [x] `test_e2e_locked_prompt` — multi-turn continuity
+- [x] `test_e2e_locked_prompt_stream` — NDJSON from locked session
+- [x] `test_e2e_lock_contention` — 409 then success
+- [x] `test_e2e_lock_release_pod_stays` — pod alive after release
+- [x] `test_e2e_lock_reconnect` — resume conversation
+- [x] `test_e2e_lock_persisted_in_vtf` — vtf AgentLock lifecycle
+- [x] `test_e2e_idle_timeout` — auto-release
+- [x] `test_e2e_health_with_locked` — pi_processes array
+- [x] `test_e2e_recovery` — bridge restart preserves locks
 
 **REPL:**
-- [ ] `test_e2e_architect_repl` — acquire, 2 prompts with continuity, release
+- [x] `test_e2e_architect_repl` — acquire, 2 prompts with continuity, release
 
 **Regression:**
-- [ ] 193 existing vafi tests pass
-- [ ] All bridge unit tests pass (~50)
-- [ ] All bridge E2E tests pass (~18)
+- [x] 193 existing vafi tests pass (now 317 total)
+- [x] All bridge unit tests pass (110)
+- [x] All bridge E2E tests pass (12)

@@ -1,8 +1,14 @@
 # ChatWidget — Design
 
-**Status:** Design
+---
+status: active
+last_verified: 2026-04-17
+---
+
 **Date:** 2026-04-13
 **Scope:** Phase C of the agent bridge service — web chat interface in vtf
+
+> **Phases 1–7 complete.** Phases 8–9 (cxdb session continuity + display history) remain.
 **Prerequisites:**
 - [agent-bridge-service-DESIGN.md](agent-bridge-service-DESIGN.md) (bridge API, locked/ephemeral sessions)
 - Bridge Phase A+B implemented and deployed
@@ -455,17 +461,17 @@ When a user starts a new session after a previous one ended, the bridge can load
 
 ## Implementation Sequence
 
-| Phase | What | Depends on |
-|-------|------|-----------|
-| 1 | `bridge.ts` API client + `useBridgeStream` hook | Nothing |
-| 2 | `ChatWidgetContext` + `ChatWidget` shell (3 layout modes) | Phase 1 |
-| 3 | `ChatWindow` + `ChatMessage` + `ChatInput` | Phase 2 |
-| 4 | Lock lifecycle (acquire/reconnect/release) | Phase 3 |
-| 5 | Streaming integration (NDJSON → messages) | Phase 4 |
-| 6 | Polish: tool indicators, markdown, auto-scroll, beforeunload | Phase 5 |
-| 7 | Integration: buttons in project pages, App.tsx mount | Phase 6 |
-| 8 | Session continuity: load prior session from cxdb on new lock acquire | Phase 7 |
-| 9 | Display history: render prior conversation from cxdb turns in widget | Phase 8 |
+| Phase | What | Depends on | Status | Commit |
+|-------|------|-----------|--------|--------|
+| 1 | `bridge.ts` API client + `useBridgeStream` hook | Nothing | ✅ Done | vtf:`c5b3fe9` |
+| 2 | `ChatWidgetContext` + `ChatWidget` shell (3 layout modes) | Phase 1 | ✅ Done | vtf:`c5b3fe9` |
+| 3 | `ChatWindow` + `ChatMessage` + `ChatInput` | Phase 2 | ✅ Done | vtf:`c5b3fe9` |
+| 4 | Lock lifecycle (acquire/reconnect/release) | Phase 3 | ✅ Done | vtf:`c5b3fe9` |
+| 5 | Streaming integration (NDJSON → messages) | Phase 4 | ✅ Done | vtf:`c5b3fe9` |
+| 6 | Polish: tool indicators, markdown, auto-scroll, beforeunload | Phase 5 | ✅ Done | vtf:`c5b3fe9` + `783a708` |
+| 7 | Integration: buttons in project pages, App.tsx mount | Phase 6 | ✅ Done | vtf:`c5b3fe9` + `66d45c5` |
+| 8 | Session continuity: load prior session from cxdb on new lock acquire | Phase 7 | ❌ Not started | — |
+| 9 | Display history: render prior conversation from cxdb turns in widget | Phase 8 | ❌ Not started | — |
 
 ### Definition of Done
 

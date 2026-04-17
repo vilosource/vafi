@@ -1,5 +1,13 @@
 # Agent Bridge Service — Implementation Plan
 
+---
+status: superseded
+superseded_by: agent-bridge-REWORK-PLAN.md
+last_verified: 2026-04-17
+---
+
+> **⚠️ SUPERSEDED** — This was the original plan. Implementation deviated, and the [Rework Plan](agent-bridge-REWORK-PLAN.md) corrected all deviations. All phases are now complete. Kept for historical reference.
+
 **Date:** 2026-04-02
 **Design:** vafi/docs/agent-bridge-service-DESIGN.md
 **Repo:** vilosource/vafi (new package: `src/bridge/`)

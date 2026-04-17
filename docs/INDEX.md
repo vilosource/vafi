@@ -1,6 +1,10 @@
 # vafi Documentation
 
-Last updated: 2026-04-13
+Last updated: 2026-04-17
+
+## Status
+
+**[STATUS-AUDIT.md](STATUS-AUDIT.md)** — Current status of all phase-tracked work across the platform.
 
 ## How to read these docs
 

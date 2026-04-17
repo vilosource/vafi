@@ -1,5 +1,12 @@
 # Harness Boundary Refactor
 
+---
+status: deferred
+last_verified: 2026-04-17
+---
+
+> **Not started.** Design docs are complete. Zero implementation. Resume when adding a third harness (beyond Claude and Pi) makes this a priority.
+
 Refactoring vafi to remove all harness-specific code from services. After this refactor, adding a new AI harness requires zero source code changes — only a new Docker image and yaml config entries.
 
 ## Documents

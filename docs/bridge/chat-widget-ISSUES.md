@@ -1,9 +1,16 @@
 # Chat Widget — Issues & Gap Analysis
 
+---
+status: completed
+last_verified: 2026-04-17
+---
+
 **Date:** 2026-04-15
 **Scope:** Phase C audit — bugs, parity gaps, and missing polish discovered during first real user test
 **Design:** [chat-widget-DESIGN.md](chat-widget-DESIGN.md)
 **Tested on:** vtf.dev.viloforge.com, python-calc project, Chat with Architect
+
+> **All issues in this document have been fixed.** See commit references below. Rework plan: [chat-widget-REWORK-PLAN.md](chat-widget-REWORK-PLAN.md)
 
 ## How these were found
 
@@ -11,7 +18,7 @@ User opened the chat widget on dev, sent "what is this project about?", received
 
 ## Bridge Issues
 
-### B1: Session ID mismatch — heartbeat false-conflict after 5 minutes
+### B1: Session ID mismatch — heartbeat false-conflict after 5 minutes — FIXED in `03cafb6` (R2)
 
 **Severity:** Critical — breaks chat after 5 minutes of use
 
@@ -43,7 +50,7 @@ User opened the chat widget on dev, sent "what is this project about?", received
 - `vafi/src/bridge/app.py:436` — updates in-memory only
 - `vafi/src/bridge/vtf_locks.py:15` — `vtf_acquire_lock` accepts session_id param but bridge never calls it with one, nor does it update after handshake
 
-### B2: Pi does not send `agent_end` per prompt in locked RPC mode
+### B2: Pi does not send `agent_end` per prompt in locked RPC mode — FIXED in `53ef419` (R1)
 
 **Severity:** Critical — 120-second stream hang after every response
 
@@ -67,7 +74,7 @@ No `agent_end` event in the session file. Session JSONL across 5 sessions only c
 - `vafi/src/bridge/pod_process.py:443` — breaks only on `agent_end`
 - `vafi/src/bridge/app.py:518` — `generate_locked` also looks for `agent_end` only
 
-### B3: Empty-line EOF bug in ExecWebSocket reader
+### B3: Empty-line EOF bug in ExecWebSocket reader — FIXED in `9e50ff7` (R4)
 
 **Severity:** Medium — could kill session mid-prompt
 
@@ -81,7 +88,7 @@ No `agent_end` event in the session file. Session JSONL across 5 sessions only c
 - `vafi/src/bridge/pod_process.py:254-258` — `read_stdout` returns `line.encode("utf-8")` which is `b""` for empty lines
 - `vafi/src/bridge/pod_process.py:346` — `if not data: break` doesn't distinguish empty line from true EOF
 
-### B4: Locked path missing event forwarding (parity gap with ephemeral)
+### B4: Locked path missing event forwarding (parity gap with ephemeral) — FIXED in `53ef419` (R3)
 
 **Severity:** Medium — tool indicators don't work in locked chat
 
@@ -96,7 +103,7 @@ The locked streaming generator (`generate_locked`, `app.py:504-527`) only handle
 
 All events ARE passed through as raw `agent_event`, but the frontend ignores `agent_event` in `handleStreamEvent` (`ChatWidgetContext.tsx:206`). Without the user-friendly `tool_use` and `error` event types, the frontend has no way to render tool indicators or show errors.
 
-### B5: VTF lock `user` is service token, not actual user
+### B5: VTF lock `user` is service token, not actual user — FIXED in `85a2bda` (R8)
 
 **Severity:** Low — confusing UX
 
@@ -109,7 +116,7 @@ The bridge acquires vtf locks using `VTF_API_TOKEN` (a service token owned by us
 
 ## Frontend Issues
 
-### F1: No syntax highlighting in code blocks
+### F1: No syntax highlighting in code blocks — FIXED in `783a708` (R5)
 
 **Severity:** Medium — architect responses often contain code
 
@@ -119,7 +126,7 @@ The bridge acquires vtf locks using `VTF_API_TOKEN` (a service token owned by us
 **Actual:** Only `react-markdown@^10.1.0` and `remark-gfm@^4.0.1` installed.
 **File:** `vtaskforge/web/src/components/ChatMessage.tsx:45-55`
 
-### F2: No smart auto-scroll
+### F2: No smart auto-scroll — FIXED in `783a708` (R6)
 
 **Severity:** Medium — frustrating in long conversations
 
@@ -135,7 +142,7 @@ useEffect(() => {
 }, [messages]);
 ```
 
-### F3: No shimmer animation on tool use indicators
+### F3: No shimmer animation on tool use indicators — FIXED in `783a708` (R7)
 
 **Severity:** Low — cosmetic
 

@@ -1,9 +1,17 @@
 # Chat Widget — Rework Plan
 
+---
+status: completed
+last_verified: 2026-04-17
+---
+
 **Date:** 2026-04-15
+**Completed:** 2026-04-16
 **Issues:** [chat-widget-ISSUES.md](chat-widget-ISSUES.md)
 **Design:** [chat-widget-DESIGN.md](chat-widget-DESIGN.md)
 **Rule:** Fix the bugs, close the parity gaps, ship the polish. No new features beyond what the design already specifies.
+
+> **All 8 phases (R1–R8) are complete.** Deployed and verified with 13/13 Playwright E2E tests passing.
 
 ## Definition of Done
 
@@ -479,33 +487,35 @@ test_acquire_lock_passes_user_id_to_vtf
 ## Execution Order
 
 ```
-R1 (stream completion)  ← must fix first, chat unusable without it
+R1 (stream completion)  ← vafi:53ef419 ✅
   ↓
-R2 (session ID sync)    ← must fix, breaks after 5 min
+R2 (session ID sync)    ← vafi:03cafb6 ✅
   ↓
-R3 (event parity)       ← tool indicators don't work without it
+R3 (event parity)       ← vafi:53ef419 (combined with R1) ✅
   ↓
-R4 (empty-line EOF)     ← defensive fix, prevents random disconnects
+R4 (empty-line EOF)     ← vafi:9e50ff7 ✅
   ↓
-R5 (syntax highlight)   ← install dep + wire up
+R5 (syntax highlight)   ← vtf:783a708 ✅
   ↓
-R6 (smart scroll)       ← UX improvement
+R6 (smart scroll)       ← vtf:783a708 (combined with R5) ✅
   ↓
-R7 (shimmer animation)  ← cosmetic polish
+R7 (shimmer animation)  ← vtf:783a708 (combined with R5) ✅
   ↓
-R8 (lock ownership)     ← needs design decision (Option A recommended)
+R8 (lock ownership)     ← vafi:85a2bda + vtf:5f95591 ✅
 ```
 
 R1-R4 are bridge changes (vafi repo). R5-R7 are frontend changes (vtaskforge repo). R8 spans both.
 
 ## Per-Phase Checklist
 
-For each phase, before declaring done:
+All phases completed 2026-04-16:
 
-- [ ] Code changes implemented
-- [ ] Unit tests written and passing locally
-- [ ] All existing tests still pass (`make test` / `npx vitest run`)
-- [ ] Committed to repo
-- [ ] Deployed to dev environment
-- [ ] Manual verification via Playwright on vtf.dev.viloforge.com
-- [ ] Pushed to GitHub
+- [x] Code changes implemented
+- [x] Unit tests written and passing locally
+- [x] All existing tests still pass (`make test` / `npx vitest run`)
+- [x] Committed to repo
+- [x] Deployed to dev environment
+- [x] Manual verification via Playwright on vtf.dev.viloforge.com
+- [x] Pushed to GitHub
+
+**E2E results (2026-04-17):** 13/13 Playwright tests passing
