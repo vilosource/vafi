@@ -61,8 +61,19 @@ executor:
 # image. Agents register with tags "executor,pi" and only claim pi-tagged
 # tasks. Set replicas to 0 to disable.
 executorPi:
-  enabled: true
+  # Disabled by default — enable per-environment (see vafi-deploy/environments/*.yaml).
+  # Prevents unused pi executor pods in environments with no pi workload.
+  enabled: false
   replicas: 1
+  # Dedicated sessions PVC. When `dedicated: false` (default) the pi
+  # executor mounts the shared `vafi-sessions` PVC alongside the claude
+  # executor. This only works on single-node clusters (RWO). For
+  # multi-node clusters, set `dedicated: true` to provision a separate
+  # `vafi-sessions-pi` PVC so the two pods never race for the volume.
+  sessionsPvc:
+    dedicated: false
+    storage: ""              # empty = inherit .Values.sessions.storage
+    storageClassName: ""     # empty = inherit .Values.sessions.storageClassName
   role: executor
   tags: "executor,pi"
   agentId: ""

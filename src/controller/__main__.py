@@ -60,9 +60,15 @@ async def main():
                     async def store_summary(self, task_id: str, summary: dict) -> None:
                         await self._client.update_task(task_id, {"execution_summary": summary})
 
-                # NL generator (Phase B) — uses Haiku via Anthropic API
+                # NL generator (Phase B) — uses Haiku via Anthropic API.
+                # Claude-harness pods set ANTHROPIC_AUTH_TOKEN (claude-code CLI
+                # convention); pi-harness pods set ANTHROPIC_API_KEY (anthropic
+                # SDK convention). Accept either.
                 nl_generator = None
-                anthropic_key = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+                anthropic_key = (
+                    os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+                    or os.environ.get("ANTHROPIC_API_KEY", "")
+                )
                 anthropic_url = os.environ.get("ANTHROPIC_BASE_URL", "")
                 if anthropic_key and anthropic_url:
                     import httpx as _httpx

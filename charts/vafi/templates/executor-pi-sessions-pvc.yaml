@@ -1,0 +1,25 @@
+{{- if and .Values.executorPi.enabled .Values.executorPi.sessionsPvc.dedicated }}
+# Dedicated sessions PVC for the pi executor. Opt-in via
+# `executorPi.sessionsPvc.dedicated: true`. Use this when the cluster has
+# multiple nodes and the pi and claude executor pods may land on different
+# nodes — the default shared vafi-sessions PVC is RWO and cannot cross
+# nodes. Single-node clusters can leave this off.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vafi.fullname" . }}-sessions-pi
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: executor-pi
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.executorPi.sessionsPvc.storageClassName }}
+  storageClassName: {{ .Values.executorPi.sessionsPvc.storageClassName | quote }}
+  {{- else if .Values.sessions.storageClassName }}
+  storageClassName: {{ .Values.sessions.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.executorPi.sessionsPvc.storage | default .Values.sessions.storage }}
+{{- end }}

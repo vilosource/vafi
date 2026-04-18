@@ -86,7 +86,11 @@ spec:
       volumes:
         - name: sessions
           persistentVolumeClaim:
+            {{- if .Values.executorPi.sessionsPvc.dedicated }}
+            claimName: {{ include "vafi.fullname" . }}-sessions-pi
+            {{- else }}
             claimName: {{ include "vafi.fullname" . }}-sessions
+            {{- end }}
         - name: ssh-secret
           secret:
             secretName: {{ .Values.sshSecret.name }}
