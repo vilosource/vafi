@@ -13,6 +13,7 @@ Last updated: 2026-04-18
 **Then, based on what you're doing:**
 
 - Building or modifying harness images? Read [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md)
+- Building or using local laptop developer containers? Read [developer-images-DESIGN.md](developer-images-DESIGN.md)
 - Working on the vtf/vafi boundary? Read [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md)
 - Adding context passing to the controller? Read [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md)
 - Working on the architect agent or vafi-console? Read [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md)
@@ -27,6 +28,11 @@ These are authoritative and kept up-to-date.
 |----------|---------|
 | [ARCHITECTURE-SUMMARY.md](ARCHITECTURE-SUMMARY.md) | System overview — components, controller loop, multi-harness, cxdb, infrastructure, key decisions |
 | [harness-images-ARCHITECTURE.md](harness-images-ARCHITECTURE.md) | Multi-harness image architecture — Claude vs Pi, Dockerfiles, config files, CLI invocation, output parsing, how to add a new harness |
+| [developer-images-DESIGN.md](developer-images-DESIGN.md) | Local laptop dev container family — `vafi-developer-base` + `vafi-developer:<harness>-<version>` leaves, swappable harness at launch, versioning and rollback. |
+| [developer-images-RUMSFELD.md](developer-images-RUMSFELD.md) | Rumsfeld matrix for the developer-image work — known knowns, open questions, resolved decisions, risks. |
+| [developer-images-S1-REPORT.md](developer-images-S1-REPORT.md) | S1 spike report — Claude/Pi/Gemini install recipes, auth patterns, config paths, coexistence verification. |
+| [developer-images-SELF-TEST-PROTOCOL.md](developer-images-SELF-TEST-PROTOCOL.md) | Protocol for AI agents (Claude etc.) to start and drive vafi-developer containers headlessly via JSON output, streaming, and pi multi-turn sessions. |
+| [developer-images-CLOSEOUT.md](developer-images-CLOSEOUT.md) | Close-out summary: deliverables, spike outcomes, migration steps, full list of 76 passing tests (54 structural + 10 prompt + 12 launcher-level). |
 | [vtf-vafi-interface-CONTRACT.md](vtf-vafi-interface-CONTRACT.md) | API contract between vtf and vafi — 14 interaction points, WorkSource protocol, gap analysis (GAP-1/GAP-4 resolved) |
 | [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md) | Context file design — `.vafi/context.md` materialized before each harness invocation |
 | [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md) | Architect agent — pod lifecycle, vafi-console integration, WebSocket proxy, MCP tools |

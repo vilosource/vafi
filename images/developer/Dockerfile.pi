@@ -1,0 +1,34 @@
+# vafi-developer:pi-<cli-version> — Pi coding agent leaf.
+#
+# Adds Pi + pi-mcp-adapter on top of the shared base. Follows the fleet's
+# pattern from images/pi/Dockerfile for the settings.json owner migration.
+
+ARG REGISTRY=vafi
+ARG BASE_TAG=latest
+FROM ${REGISTRY}/vafi-developer-base:${BASE_TAG}
+
+USER root
+
+ARG PI_VERSION=latest
+RUN if [ "$PI_VERSION" = "latest" ]; then \
+      npm install -g @mariozechner/pi-coding-agent; \
+    else \
+      npm install -g @mariozechner/pi-coding-agent@${PI_VERSION}; \
+    fi
+
+# Install pi-mcp-adapter — writes settings.json to /root/.pi/agent/ when run as root.
+RUN pi install npm:pi-mcp-adapter
+
+# Migrate root-owned settings to agent home so the agent user sees them.
+RUN mkdir -p /home/agent/.pi/agent \
+    && cp /root/.pi/agent/settings.json /home/agent/.pi/agent/settings.json \
+    && chown -R agent:agent /home/agent/.pi
+
+# Allow agent to reinstall/update pi-mcp-adapter at runtime without EACCES.
+RUN chown -R agent:agent /usr/local/lib/node_modules /usr/local/bin
+
+USER agent
+
+RUN pi --version
+
+ENV VF_HARNESS=pi

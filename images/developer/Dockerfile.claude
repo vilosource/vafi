@@ -1,0 +1,24 @@
+# vafi-developer:claude-<cli-version> — Claude Code leaf.
+#
+# FROM the pinned base (caller overrides BASE_TAG at build time to match the
+# current base date; the build script handles this).
+
+ARG REGISTRY=vafi
+ARG BASE_TAG=latest
+FROM ${REGISTRY}/vafi-developer-base:${BASE_TAG}
+
+USER root
+
+ARG CLAUDE_VERSION=latest
+RUN if [ "$CLAUDE_VERSION" = "latest" ]; then \
+      npm install -g @anthropic-ai/claude-code; \
+    else \
+      npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION}; \
+    fi \
+    && chown -R agent:agent /usr/local/lib/node_modules /usr/local/bin
+
+USER agent
+
+RUN claude --version
+
+ENV VF_HARNESS=claude

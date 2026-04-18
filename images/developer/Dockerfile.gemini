@@ -1,0 +1,21 @@
+# vafi-developer:gemini-<cli-version> — Google Gemini CLI leaf.
+
+ARG REGISTRY=vafi
+ARG BASE_TAG=latest
+FROM ${REGISTRY}/vafi-developer-base:${BASE_TAG}
+
+USER root
+
+ARG GEMINI_VERSION=latest
+RUN if [ "$GEMINI_VERSION" = "latest" ]; then \
+      npm install -g @google/gemini-cli; \
+    else \
+      npm install -g @google/gemini-cli@${GEMINI_VERSION}; \
+    fi \
+    && chown -R agent:agent /usr/local/lib/node_modules /usr/local/bin
+
+USER agent
+
+RUN gemini --version
+
+ENV VF_HARNESS=gemini

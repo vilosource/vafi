@@ -10,6 +10,7 @@ build/
 # Secrets — never commit real secret values
 k8s/overlays/*/secrets/*
 !k8s/overlays/*/secrets/.gitkeep
+scripts/vf-launchers-context.sh
 
 # Environment
 .env

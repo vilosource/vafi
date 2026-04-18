@@ -1,0 +1,148 @@
+# vafi-developer-base — shared body for all local laptop developer images.
+#
+# Scope: AI-agnostic devtools + mempalace + generic vf-harness dispatcher scripts.
+# Leaves (Dockerfile.claude|pi|gemini) add exactly one harness CLI on top
+# and set VF_HARNESS so /opt/vf-harness/init.sh picks the right branch.
+#
+# Inherits from vafi-base (see KU-3 in developer-images-RUMSFELD.md) — gives us
+# the `agent` uid-1001 user, WORKDIR, node:20-bookworm-slim, and system packages
+# (git, curl, openssh-client, jq, python3, yarn) for free.
+
+ARG REGISTRY=vafi
+FROM ${REGISTRY}/vafi-base:latest
+
+USER root
+
+ARG FZF_VERSION=0.71.0
+ARG GO_VERSION=1.24.4
+ARG GLAB_VERSION=1.92.1
+
+# --- Editor + shell conveniences ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      vim tmux tree dnsutils netcat-openbsd httpie shellcheck \
+      bat fd-find ripgrep \
+      apt-transport-https gnupg lsb-release software-properties-common \
+      unzip wget make \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/batcat /usr/local/bin/bat \
+    && ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
+# --- Python quality tools + mcp-mediawiki ---
+RUN pip install --break-system-packages ruff mypy pre-commit \
+    && pip install --break-system-packages git+https://github.com/vilosource/mcp-mediawiki.git
+
+# --- yq ---
+RUN curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+      -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+# --- fzf ---
+RUN curl -fsSL "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_amd64.tar.gz" \
+      -o /tmp/fzf.tar.gz \
+    && tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/fzf \
+    && rm /tmp/fzf.tar.gz
+
+# --- uv (python package manager) ---
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && mv /root/.local/bin/uvx /usr/local/bin/uvx
+
+# --- GitHub CLI ---
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- GitLab CLI ---
+RUN curl -fsSL -L "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_amd64.tar.gz" \
+      -o /tmp/glab.tar.gz \
+    && tar -xzf /tmp/glab.tar.gz -C /tmp \
+    && mv /tmp/bin/glab /usr/local/bin/glab \
+    && chmod +x /usr/local/bin/glab \
+    && rm -rf /tmp/glab.tar.gz /tmp/bin
+
+# --- Go ---
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \
+    && rm /tmp/go.tar.gz
+ENV PATH=/usr/local/go/bin:/home/agent/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV GOPATH=/home/agent/go
+
+# --- Docker CE CLI (for nested docker via /var/run/docker.sock bind-mount) ---
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
+      > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Azure CLI + azcopy ---
+RUN pip install --break-system-packages azure-cli
+RUN curl -sL https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tar.gz \
+    && tar -xzf /tmp/azcopy.tar.gz -C /tmp --strip-components=1 \
+    && mv /tmp/azcopy /usr/local/bin/azcopy \
+    && chmod +x /usr/local/bin/azcopy \
+    && rm -f /tmp/azcopy.tar.gz
+
+# --- HashiCorp (terraform + vault) ---
+RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+      > /etc/apt/sources.list.d/hashicorp.list \
+    && apt-get update && apt-get install -y --no-install-recommends terraform vault \
+    && rm -rf /var/lib/apt/lists/* \
+    && setcap -r /usr/bin/vault
+
+# --- Ansible ---
+RUN pip install --break-system-packages ansible
+
+# --- kubectl ---
+RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /usr/share/keyrings/kubernetes.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/kubernetes.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" \
+      > /etc/apt/sources.list.d/kubernetes.list \
+    && apt-get update && apt-get install -y --no-install-recommends kubectl \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Helm ---
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# --- MemPalace (installs chromadb transitively — needed before prefetch below) ---
+RUN pip install --break-system-packages git+https://github.com/vilosource/mempalace.git@develop
+
+# --- Pre-fetch chromadb ONNX embedding model (fast & offline mempalace startup) ---
+RUN mkdir -p /home/agent/.mempalace \
+    && python3 -c "from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2; \
+                   ef = ONNXMiniLM_L6_V2(); \
+                   ef._download_model_if_not_exists()" \
+    && chown -R agent:agent /home/agent/.mempalace
+
+# --- vf-harness dispatcher scripts + pi extras ---
+COPY vf-harness/ /opt/vf-harness/
+COPY pi-extras/  /opt/vf-harness/pi-extras/
+RUN chmod +x /opt/vf-harness/*.sh
+
+# --- Verification ---
+RUN az version --output tsv 2>/dev/null | head -1 \
+    && terraform version | head -1 \
+    && vault version \
+    && ansible --version | head -1 \
+    && kubectl version --client=true 2>/dev/null | head -1 || true \
+    && helm version --short \
+    && go version \
+    && uv --version \
+    && gh --version | head -1 \
+    && glab --version | head -1 \
+    && docker --version \
+    && azcopy --version \
+    && yq --version \
+    && fzf --version \
+    && python3 -c "import mempalace; print('mempalace: OK')" \
+    && echo "vafi-developer-base tools verified"
+
+USER agent
+
+WORKDIR /workspace
+
+# Default entrypoint dispatches on $VF_HARNESS; leaves override VF_HARNESS via ENV.
+ENTRYPOINT ["/opt/vf-harness/init.sh"]
+CMD ["bash"]

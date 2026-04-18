@@ -1,0 +1,38 @@
+# vf-launchers-context.sh — per-context env for vafi-developer launchers.
+#
+# This file contains plaintext secrets — DO NOT commit to git.
+# Copy to ~/.claude/vf-launchers-context.sh and fill in your values.
+#
+# Each array below is read by _vafi_dev_run when the matching context runs.
+# Arrays are named <CTX>_EXTRA_ENV in uppercase; ctx is the first arg to
+# _vafi_dev_run (vf, og, dr, pi). Add or remove contexts as needed.
+
+# --- ViloForge (vfdev → ~/VF) ------------------------------------------------
+VF_EXTRA_ENV=(
+  # -e "STITCH_API_KEY=your-stitch-api-key"
+)
+
+# --- OptiscanGroup (ogcli → ~/OG) --------------------------------------------
+OG_EXTRA_ENV=(
+  # -e "MW_API_HOST=wiki-api.your-domain.com"
+  # -e "MW_API_PATH=/"
+  # -e "MW_USE_HTTPS=true"
+  # -e "MW_BOT_USER=your-bot-user"
+  # -e "MW_BOT_PASS=your-bot-password"
+)
+
+# --- OptiscanGroup DR (ogdr → ~/DR) ------------------------------------------
+DR_EXTRA_ENV=(
+  # -e "MW_API_HOST=wiki-api.your-domain.com"
+  # -e "MW_API_PATH=/"
+  # -e "MW_USE_HTTPS=true"
+  # -e "MW_BOT_USER=your-bot-user"
+  # -e "MW_BOT_PASS=your-bot-password"
+)
+
+# --- PI context (pidev → ~/PI) -----------------------------------------------
+# z.ai Anthropic-compatible proxy example; set ANTHROPIC_API_KEY instead for direct auth.
+PI_EXTRA_ENV=(
+  # -e "ANTHROPIC_AUTH_TOKEN=your-auth-token"
+  # -e "ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic"
+)
