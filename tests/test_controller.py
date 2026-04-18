@@ -26,7 +26,7 @@ class MockWorkSource:
         self.complete = AsyncMock()
         self.get_repo_info = AsyncMock()
         self.get_rework_context = AsyncMock()
-        self.count_rework_attempts = AsyncMock()
+        self.count_rework_attempts = AsyncMock(return_value=0)
         self.submit = AsyncMock()
         self.list_submittable = AsyncMock()
         self.submit_review = AsyncMock()
@@ -237,3 +237,99 @@ class TestController:
 
         # Agent heartbeat should have fired at least once
         assert mock_work_source.agent_heartbeat.call_count >= 1
+
+
+class TestReworkCap:
+    """VF_MAX_REWORK enforcement: fail tasks that exceed the cap before harness invocation."""
+
+    @pytest.mark.asyncio
+    async def test_fails_task_when_rework_cap_exceeded(
+        self, mock_work_source, test_config, sample_agent, sample_task
+    ):
+        """When count_rework_attempts >= max_rework, fail the task and skip execute."""
+        test_config.max_rework = 3
+        mock_work_source.poll.return_value = sample_task
+        mock_work_source.claim.return_value = sample_task
+        mock_work_source.count_rework_attempts.return_value = 3
+
+        controller = Controller(mock_work_source, test_config)
+        controller._agent_info = sample_agent
+        controller.execute = AsyncMock()
+
+        await controller._poll_and_execute()
+
+        controller.execute.assert_not_called()
+        mock_work_source.fail.assert_called_once()
+        call_args = mock_work_source.fail.call_args[0]
+        assert call_args[0] == sample_task.id
+        assert "Rework limit exceeded" in call_args[1]
+        assert "3 prior rejections" in call_args[1]
+        assert "max 3" in call_args[1]
+
+    @pytest.mark.asyncio
+    async def test_fails_task_when_rework_count_above_cap(
+        self, mock_work_source, test_config, sample_agent, sample_task
+    ):
+        """Boundary: a count *above* the cap (e.g. 4 with max=3) also fails."""
+        test_config.max_rework = 3
+        mock_work_source.poll.return_value = sample_task
+        mock_work_source.claim.return_value = sample_task
+        mock_work_source.count_rework_attempts.return_value = 4
+
+        controller = Controller(mock_work_source, test_config)
+        controller._agent_info = sample_agent
+        controller.execute = AsyncMock()
+
+        await controller._poll_and_execute()
+
+        controller.execute.assert_not_called()
+        mock_work_source.fail.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_proceeds_when_rework_count_below_cap(
+        self, mock_work_source, test_config, sample_agent, sample_task
+    ):
+        """Boundary: count == max - 1 still invokes the harness."""
+        from controller.types import ExecutionResult
+
+        test_config.max_rework = 3
+        mock_work_source.poll.return_value = sample_task
+        mock_work_source.claim.return_value = sample_task
+        mock_work_source.count_rework_attempts.return_value = 2
+
+        controller = Controller(mock_work_source, test_config)
+        controller._agent_info = sample_agent
+        controller.execute = AsyncMock(return_value=ExecutionResult(
+            success=True, session_id=None, completion_report="", cost_usd=0.0,
+            num_turns=0, gate_results=[],
+        ))
+
+        await controller._poll_and_execute()
+
+        controller.execute.assert_called_once()
+        mock_work_source.fail.assert_not_called()
+        mock_work_source.complete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_proceeds_when_count_rework_attempts_raises(
+        self, mock_work_source, test_config, sample_agent, sample_task
+    ):
+        """If count_rework_attempts errors, proceed with harness (don't stall the task)."""
+        from controller.types import ExecutionResult
+
+        test_config.max_rework = 3
+        mock_work_source.poll.return_value = sample_task
+        mock_work_source.claim.return_value = sample_task
+        mock_work_source.count_rework_attempts.side_effect = RuntimeError("vtf down")
+
+        controller = Controller(mock_work_source, test_config)
+        controller._agent_info = sample_agent
+        controller.execute = AsyncMock(return_value=ExecutionResult(
+            success=True, session_id=None, completion_report="", cost_usd=0.0,
+            num_turns=0, gate_results=[],
+        ))
+
+        await controller._poll_and_execute()
+
+        controller.execute.assert_called_once()
+        mock_work_source.fail.assert_not_called()

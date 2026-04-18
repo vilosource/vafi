@@ -55,6 +55,50 @@ executor:
     failureThreshold: 3
 
 # ---------------------------------------------------------------------------
+# Executor (Pi harness) — Pi-based agent for pi-tagged tasks
+# ---------------------------------------------------------------------------
+# Runs a separate deployment of the executor controller with the pi harness
+# image. Agents register with tags "executor,pi" and only claim pi-tagged
+# tasks. Set replicas to 0 to disable.
+executorPi:
+  enabled: true
+  replicas: 1
+  role: executor
+  tags: "executor,pi"
+  agentId: ""
+  pollInterval: 30
+  taskTimeout: 600
+  maxRework: 3
+  maxTurns: 50
+  heartbeatInterval: 300
+  sessionsDir: "/sessions"
+  harness: "pi"
+  piProvider: "anthropic"
+  piModel: "claude-sonnet-4-20250514"
+  outputFormat: "pi_jsonl"
+  image:
+    repository: harbor.viloforge.com/vafi/vafi-agent-pi
+    tag: latest
+    pullPolicy: Always
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  readinessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 2
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ---------------------------------------------------------------------------
 # Judge — AI agent that reviews completed tasks
 # ---------------------------------------------------------------------------
 judge:

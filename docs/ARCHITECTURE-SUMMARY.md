@@ -35,6 +35,15 @@ vtf API (task board)  <-->  vafi controller (in pod)  -->  harness (claude or pi
 
 All three roles use the same image hierarchy and controller code. Role is selected by `VF_AGENT_ROLE` env var.
 
+> **"Supervisor" is a design contract, not a running role.** The
+> interface `CONTRACT.md §13` and `WorkSource.submit()` /
+> `list_submittable()` describe a supervisor that polls for draft
+> tasks with dependencies met and promotes them to `todo`. No such
+> daemon runs in vafi — the controller has no `supervisor` branch.
+> Draft→todo promotion is performed by humans (UI) or architect
+> agents (MCP `vtf_submit_task`). The methods remain in the
+> `WorkSource` protocol for a future supervisor implementation.
+
 ## Controller loop
 
 ```

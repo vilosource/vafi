@@ -112,6 +112,64 @@ Common environment variables for the executor container.
 {{- end }}
 
 {{/*
+Environment variables for the pi-harness executor container.
+Mirrors vafi.executorEnv but reads from .Values.executorPi and adds the
+harness-specific vars (VF_HARNESS, VF_PI_PROVIDER, VF_PI_MODEL).
+The pi binary reads ANTHROPIC_API_KEY (anthropic SDK), not ANTHROPIC_AUTH_TOKEN.
+*/}}
+{{- define "vafi.executorPiEnv" -}}
+- name: VF_AGENT_ID
+  value: {{ .Values.executorPi.agentId | quote }}
+- name: VF_AGENT_ROLE
+  value: {{ .Values.executorPi.role | quote }}
+- name: VF_AGENT_TAGS
+  value: {{ .Values.executorPi.tags | quote }}
+- name: VF_HARNESS
+  value: {{ .Values.executorPi.harness | quote }}
+- name: VF_PI_PROVIDER
+  value: {{ .Values.executorPi.piProvider | quote }}
+- name: VF_PI_MODEL
+  value: {{ .Values.executorPi.piModel | quote }}
+- name: VF_VTF_API_URL
+  value: {{ .Values.vtf.apiUrl | quote }}
+- name: VF_VTF_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vafi.secretName" . }}
+      key: vtf-token
+- name: VF_POLL_INTERVAL
+  value: {{ .Values.executorPi.pollInterval | quote }}
+- name: VF_TASK_TIMEOUT
+  value: {{ .Values.executorPi.taskTimeout | quote }}
+- name: VF_MAX_REWORK
+  value: {{ .Values.executorPi.maxRework | quote }}
+- name: VF_MAX_TURNS
+  value: {{ .Values.executorPi.maxTurns | quote }}
+- name: VF_HEARTBEAT_INTERVAL
+  value: {{ .Values.executorPi.heartbeatInterval | quote }}
+- name: VF_SESSIONS_DIR
+  value: {{ .Values.executorPi.sessionsDir | quote }}
+{{- if .Values.cxdb.enabled }}
+- name: VF_CXDB_URL
+  value: "http://{{ include "vafi.cxdbName" . }}:80"
+{{- if .Values.cxdb.publicUrl }}
+- name: VF_CXDB_PUBLIC_URL
+  value: {{ .Values.cxdb.publicUrl | quote }}
+{{- end }}
+{{- end }}
+- name: ANTHROPIC_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vafi.secretName" . }}
+      key: anthropic-auth-token
+- name: ANTHROPIC_BASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vafi.secretName" . }}
+      key: anthropic-base-url
+{{- end }}
+
+{{/*
 Environment variables for the judge container.
 Same structure as executor but reads from .Values.judge.
 */}}

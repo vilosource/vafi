@@ -1,6 +1,6 @@
 # vafi Documentation
 
-Last updated: 2026-04-17
+Last updated: 2026-04-18
 
 ## Status
 
@@ -17,6 +17,7 @@ Last updated: 2026-04-17
 - Adding context passing to the controller? Read [agent-context-passing-DESIGN.md](agent-context-passing-DESIGN.md)
 - Working on the architect agent or vafi-console? Read [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md)
 - Working on the agent bridge service? Read [bridge/agent-bridge-service-DESIGN.md](bridge/agent-bridge-service-DESIGN.md) (start with the "Start Here" section)
+- Landing fixes from the 2026-04-18 vtf/vafi discovery pass? Read [vtf-vafi-fixes-PLAN.md](vtf-vafi-fixes-PLAN.md)
 
 ## Active Documents
 
@@ -31,6 +32,7 @@ These are authoritative and kept up-to-date.
 | [architect-agent-IMPLEMENTATION.md](architect-agent-IMPLEMENTATION.md) | Architect agent — pod lifecycle, vafi-console integration, WebSocket proxy, MCP tools |
 | [bridge/agent-bridge-service-DESIGN.md](bridge/agent-bridge-service-DESIGN.md) | Agent bridge service — HTTP API for agent prompts, Pi RPC process manager, locked/ephemeral sessions. Phase A+B implemented, Phase C (channels) remaining. |
 | [bridge/agent-bridge-IMPLEMENTATION-PLAN.md](bridge/agent-bridge-IMPLEMENTATION-PLAN.md) | Original 10-phase TDD implementation plan with acceptance criteria (historical). |
+| [vtf-vafi-fixes-PLAN.md](vtf-vafi-fixes-PLAN.md) | 2026-04-18 discovery fixes — MCP `requires` overload, `parse_bool("")` bug, hand-rolled pi executor + wrong liveness probe, `VF_MAX_REWORK` not enforced, supervisor gap. 5 fixes ranked, ~9 hr critical path. |
 | [bridge/agent-bridge-REWORK-PLAN.md](bridge/agent-bridge-REWORK-PLAN.md) | 18-item rework plan correcting implementation deviations (historical). |
 
 ## Archived Documents

@@ -279,6 +279,18 @@ No vtf change needed — the data is already there.
 
 ### 13. Supervisor: Submit Unblocked Tasks
 
+> **Status (2026-04-18):** the supervisor role is **not implemented in
+> the controller**. `controller.py:131-134` branches on `agent_role`
+> for `executor` and `judge` only; no supervisor branch exists. The
+> `WorkSource.submit()` and `WorkSource.list_submittable()` methods
+> are implemented (see `worksources/vtf.py:316-345`) but have no
+> caller inside vafi.
+>
+> In practice, draft-to-todo promotion is performed manually via MCP
+> (`vtf_submit_task`) or the web UI. The pattern below is retained as
+> the design contract for a future supervisor daemon; do not treat it
+> as a live code path.
+
 The supervisor polls for draft tasks whose dependencies are all met:
 
 ```

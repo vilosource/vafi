@@ -1,0 +1,96 @@
+{{- if .Values.executorPi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vafi.fullname" . }}-executor-pi
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "executor-pi") | nindent 4 }}
+spec:
+  replicas: {{ .Values.executorPi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vafi.selectorLabels" (dict "root" . "component" "executor-pi") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vafi.labels" . | nindent 8 }}
+        {{- include "vafi.selectorLabels" (dict "root" . "component" "executor-pi") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: setup-ssh
+          image: "{{ .Values.image.base.repository }}:{{ .Values.image.base.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              cp /ssh-secret/ssh-privatekey /ssh-ready/id_ed25519
+              cp /ssh-secret/ssh-publickey /ssh-ready/id_ed25519.pub
+              chmod 600 /ssh-ready/id_ed25519
+              chmod 644 /ssh-ready/id_ed25519.pub
+              echo "StrictHostKeyChecking no" > /ssh-ready/config
+              chmod 644 /ssh-ready/config
+          env:
+            - name: VF_OUTPUT_FORMAT
+              value: {{ .Values.executorPi.outputFormat | quote }}
+          volumeMounts:
+            - name: ssh-secret
+              mountPath: /ssh-secret
+              readOnly: true
+            - name: ssh-ready
+              mountPath: /ssh-ready
+      containers:
+        - name: vafi-agent-pi
+          image: "{{ .Values.executorPi.image.repository }}:{{ .Values.executorPi.image.tag }}"
+          imagePullPolicy: {{ .Values.executorPi.image.pullPolicy }}
+          securityContext:
+            runAsUser: 1001
+            runAsNonRoot: true
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- include "vafi.executorPiEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: sessions
+              mountPath: {{ .Values.executorPi.sessionsDir }}
+            - name: ssh-ready
+              mountPath: /home/agent/.ssh
+          resources:
+            {{- toYaml .Values.executorPi.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q 'python3 -m controller'"
+            initialDelaySeconds: {{ .Values.executorPi.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.executorPi.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.executorPi.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.executorPi.readinessProbe.failureThreshold }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "cat /proc/1/cmdline | tr '\\0' ' ' | grep -q 'python3 -m controller'"
+            initialDelaySeconds: {{ .Values.executorPi.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.executorPi.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.executorPi.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.executorPi.livenessProbe.failureThreshold }}
+      volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: {{ include "vafi.fullname" . }}-sessions
+        - name: ssh-secret
+          secret:
+            secretName: {{ .Values.sshSecret.name }}
+        - name: ssh-ready
+          emptyDir: {}
+      restartPolicy: Always
+{{- end }}

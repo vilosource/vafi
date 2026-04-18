@@ -150,6 +150,24 @@ class Controller:
             claimed_task = await self.work_source.claim(task.id, self._agent_info.id)
             logger.info(f"Claimed task {claimed_task.id}: {claimed_task.title}")
 
+            # Enforce VF_MAX_REWORK before invoking the harness (contract §13).
+            # count_rework_attempts returns 0 on first-attempt tasks, so the
+            # guard is inert outside rework. Failure to count is treated as 0
+            # to avoid stalling tasks on a transient metadata error.
+            try:
+                rework_count = await self.work_source.count_rework_attempts(task.id)
+            except Exception as e:
+                logger.warning(f"Failed to count rework attempts for task {task.id}: {e}")
+                rework_count = 0
+            if rework_count >= self.config.max_rework:
+                reason = (
+                    f"Rework limit exceeded: {rework_count} prior rejections "
+                    f"(max {self.config.max_rework}). Human triage required."
+                )
+                logger.warning(f"Task {task.id}: {reason}")
+                await self.work_source.fail(task.id, reason)
+                return
+
             # Log task details
             self._log_task_details(claimed_task)
 
