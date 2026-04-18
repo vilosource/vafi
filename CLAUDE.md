@@ -48,9 +48,12 @@ make helm-lint      # Validate Helm chart
 
 ## Architecture
 
-Agents (executor and judge) run as Kubernetes pods. Both use the same
-container image — the entrypoint copies the role-specific methodology
-based on `VF_AGENT_ROLE` environment variable.
+Agents (executor-claude, executor-pi, judge) run as Kubernetes pods. Claude
+executor and judge share the `vafi-agent` image; pi executor uses
+`vafi-agent-pi` (different harness binary). The entrypoint copies the
+role-specific methodology based on `VF_AGENT_ROLE` environment variable.
+Chart templates: `executor-deployment.yaml`, `executor-pi-deployment.yaml`,
+`judge-deployment.yaml`.
 
 **Context passing:** The controller writes `.vafi/context.md` into the
 task workdir before each harness invocation. This file contains the task

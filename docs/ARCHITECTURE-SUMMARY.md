@@ -2,7 +2,7 @@
 
 Compact reference for the vafi agent fleet. Read this instead of the archived design docs.
 
-Last updated: 2026-04-02
+Last updated: 2026-04-18
 
 ## What vafi is
 
@@ -59,7 +59,7 @@ register() -> loop { poll() -> claim() -> clone repo -> build context -> invoke 
 7. Run verification gates (test suite exit code = source of truth)
 8. Post-execution (best-effort, background): look up trace URL in cxdb and post to vtf notes; if summarizer configured, generate NL summary via Haiku
 9. Report result: complete (gates passed) or fail (gates failed)
-10. On changes_requested: controller picks up rework on next poll (max 3 attempts)
+10. On changes_requested: controller picks up rework on next poll. After `VF_MAX_REWORK` rejections (default 3), the controller fails the task with a triage message instead of invoking the harness again — enforced in `_poll_and_execute` (fix 62f455d).
 
 ## Multi-harness support
 
@@ -73,9 +73,12 @@ Two harnesses are supported. See [harness-images-ARCHITECTURE.md](harness-images
 | Methodology delivery | Auto-discovered from `~/.claude/CLAUDE.md` | `--append-system-prompt` flag |
 | Output format | Single JSON object | Streaming JSONL |
 | MCP config | `~/.claude.json` mcpServers | `~/.pi/agent/mcp.json` via pi-mcp-adapter |
+| API key env var | `ANTHROPIC_AUTH_TOKEN` | `ANTHROPIC_API_KEY` |
 | cxtx support | `cxtx claude` | `cxtx pi` |
+| Helm chart template | `executor-deployment.yaml` | `executor-pi-deployment.yaml` |
+| Values section | `executor.*` | `executorPi.*` (gated by `executorPi.enabled`) |
 
-Both harnesses use the same controller, gates, WorkSource protocol, and reporting.
+Both harnesses use the same controller, gates, WorkSource protocol, and reporting. Each runs as its own Deployment; work sources filter by agent-tag subset (`executor` for claude, `executor,pi` for pi). The controller's summarizer reads whichever API-key env var is present, so pi pods get the Haiku NL summary generator without Claude-specific env vars.
 
 ## Observability (cxdb)
 

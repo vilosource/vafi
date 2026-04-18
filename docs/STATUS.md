@@ -1,6 +1,6 @@
 # vafi — Status Dashboard
 
-Last updated: 2026-04-17 (by: claude)
+Last updated: 2026-04-18 (by: claude)
 
 ---
 
@@ -24,6 +24,7 @@ Last updated: 2026-04-17 (by: claude)
 
 | Item | Completed | Commits | Verified |
 |------|-----------|---------|----------|
+| vtf/vafi discovery-pass fixes (5 fixes + 7 review follow-ups + pi image rebuild) | 2026-04-18 | vafi:`62f455d`+`88adabc`, vtf:`b2ea31c`+`5ad80d7`, deploy:`78d59bf`+`c092e43` | 4-task chain E2E ✅ (commit `46c27a1` on vafi-smoke-test) |
 | Chat widget rework R1–R8 | 2026-04-16 | vafi:`85a2bda`, vtf:`334f11f` | 13/13 Playwright E2E ✅ |
 | Bridge rework Phase A+B | 2026-04-14 | vafi:`dad9d0d` | 12 E2E tests ✅ |
 | Chat widget Phases 1–7 | 2026-04-13 | vtf:`c5b3fe9` | Deployed to vtf.dev ✅ |
