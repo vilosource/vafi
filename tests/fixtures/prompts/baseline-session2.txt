@@ -1,0 +1,1 @@
+What is my favorite color, my birthday, and the name of my project? Reply with just those three facts in one line, comma-separated. If you do not know any of them, say "UNKNOWN" for that field.

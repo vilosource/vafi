@@ -8,10 +8,11 @@ Last updated: 2026-04-18 (by: claude)
 
 | Item | Area | Priority | Blocked by | Notes |
 |------|------|----------|-----------|-------|
-| Chat widget Phase 8: Session continuity | bridge + vtf | Medium | — | Load prior cxdb context on lock acquire so agent remembers previous conversations |
-| Chat widget Phase 9: Display history | bridge + vtf | Medium | Phase 8 | Render prior cxdb conversation turns in widget |
+| Chat widget Phase 9: Display history | bridge + vtf | Medium | — | Render prior conversation turns in widget. Phase 8 gives the agent the context; this gives the user visibility. |
 | Console terminal session reuse | vafi-console | Low | — | connectToPod() clears terminal on every click. Proposed fix: tmux. No doc yet. |
 | Slack adapter | bridge | Low | — | Channel adapter interface exists (`adapters/protocol.py`), Slack not implemented |
+| Streaming endpoint SessionRecord wiring | bridge | Low | — | `/v1/prompt/stream` does NOT call `session_recorder.record()` (only `/v1/prompt` does). Surfaced by Phase 8 spike. Independent fix. |
+| cxtx pi capture (upstream) | cxdb | Low | — | `cxtx pi` captures only wrapper start/end, not Anthropic API traffic. Affects all pi-based cxdb ingestion (executor + would-be architect). Upstream issue. |
 
 ## Deferred
 
@@ -24,6 +25,7 @@ Last updated: 2026-04-18 (by: claude)
 
 | Item | Completed | Commits | Verified |
 |------|-----------|---------|----------|
+| Chat widget Phase 8: Session continuity (architect Pi JSONL → `--append-system-prompt`) | 2026-04-19 | branch `phase-8-session-continuity` | Test A (nonce plumbing) + Test B (task continuation) ✅ against vafi-dev |
 | vtf/vafi discovery-pass fixes (5 fixes + 7 review follow-ups + pi image rebuild) | 2026-04-18 | vafi:`62f455d`+`88adabc`, vtf:`b2ea31c`+`5ad80d7`, deploy:`78d59bf`+`c092e43` | 4-task chain E2E ✅ (commit `46c27a1` on vafi-smoke-test) |
 | Chat widget rework R1–R8 | 2026-04-16 | vafi:`85a2bda`, vtf:`334f11f` | 13/13 Playwright E2E ✅ |
 | Bridge rework Phase A+B | 2026-04-14 | vafi:`dad9d0d` | 12 E2E tests ✅ |

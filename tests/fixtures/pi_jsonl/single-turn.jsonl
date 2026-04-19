@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"aaaaaaaa-1111-1111-1111-111111111111","timestamp":"2026-04-10T10:00:00.000Z","cwd":"/sessions/fixture"}
+{"type":"model_change","id":"m1","parentId":null,"timestamp":"2026-04-10T10:00:00.100Z","provider":"anthropic","modelId":"claude-sonnet-4-20250514"}
+{"type":"thinking_level_change","id":"t1","parentId":"m1","timestamp":"2026-04-10T10:00:00.200Z","thinkingLevel":"off"}
+{"type":"message","id":"u1","parentId":"t1","timestamp":"2026-04-10T10:00:10.000Z","message":{"role":"user","content":[{"type":"text","text":"What is the capital of Japan?"}],"timestamp":1776189600000}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-04-10T10:00:12.500Z","message":{"role":"assistant","content":[{"type":"text","text":"The capital of Japan is Tokyo."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-20250514","usage":{"input":50,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":60,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1776189602500,"responseId":"msg_single"}}

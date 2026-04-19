@@ -131,9 +131,16 @@ class PodProcessManager:
         sanitized = _sanitize_k8s_name(project)
         session_dir = f"/sessions/{sanitized}/"
         repo_dir = f"{session_dir}repo/"
-        pi_args = f"--mode rpc --session-dir {session_dir} --provider {provider} --model {model}"
-        if methodology:
-            pi_args += f" --append-system-prompt {methodology}"
+        # Pi only honors the LAST --append-system-prompt flag (verified in
+        # the Phase 8 spike). The methodology + prior-session context are
+        # merged into a single file by build_prior_context.py and passed via
+        # one --append-system-prompt /tmp/initial-context.md.
+        initial_context = "/tmp/initial-context.md"
+        pi_args = (
+            f"--mode rpc --session-dir {session_dir} "
+            f"--provider {provider} --model {model} "
+            f"--append-system-prompt {initial_context}"
+        )
         if thinking_level:
             pi_args += f" --thinking {thinking_level}"
 
@@ -161,11 +168,24 @@ class PodProcessManager:
             f" python3 /opt/vf-agent/hydrate_context.py {repo_dir} 1>&2 || true"
         )
 
+        # Build the initial-context file (methodology + optional prior-session
+        # summary). On any failure, fall back to copying the methodology
+        # verbatim so Pi still receives the role definition.
+        methodology_path = methodology or "/dev/null"
+        build_prior = (
+            f"python3 /opt/vf-agent/build_prior_context.py"
+            f" --session-dir {session_dir}"
+            f" --methodology {methodology_path}"
+            f" --output {initial_context} 1>&2"
+            f" || cp {methodology_path} {initial_context}"
+        )
+
         # Run Pi with its working directory inside the repo so bash tools
         # (grep, find, cat) operate on the project source.
         return [
             "bash", "-c",
             f"{pi_config}; {hydrate_repo_url}; {clone}; {hydrate_context};"
+            f" {build_prior};"
             f" cd {repo_dir} && exec pi {pi_args}",
         ]
 
