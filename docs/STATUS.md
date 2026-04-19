@@ -13,6 +13,7 @@ Last updated: 2026-04-18 (by: claude)
 | Slack adapter | bridge | Low | — | Channel adapter interface exists (`adapters/protocol.py`), Slack not implemented |
 | Streaming endpoint SessionRecord wiring | bridge | Low | — | `/v1/prompt/stream` does NOT call `session_recorder.record()` (only `/v1/prompt` does). Surfaced by Phase 8 spike. Independent fix. |
 | cxtx pi capture (upstream) | cxdb | Low | — | `cxtx pi` captures only wrapper start/end, not Anthropic API traffic. Affects all pi-based cxdb ingestion (executor + would-be architect). Upstream issue. |
+| Phase 8 continuity header UX polish | bridge (build_prior_context.py) | Low | — | When the user asks "what's in your context?", the architect quotes the literal `# Continuation from previous sessions` header verbatim. Functionally correct but exposes implementation detail. Soften the header phrasing or restructure the instruction. |
 
 ## Deferred
 
