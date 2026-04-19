@@ -1,0 +1,1 @@
+Design a Python class for a bank account. It must support deposit and withdraw methods. Just write the class definition — no tests, no example usage, no commentary. Use the class name BankAccount.

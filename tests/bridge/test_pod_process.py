@@ -156,6 +156,47 @@ class TestPodProcessManager:
         script = cmd[2]
         assert "cd /sessions/my-proj/repo/ && exec pi" in script
 
+    @pytest.mark.asyncio
+    async def test_exec_command_invokes_build_prior_context(self):
+        """Phase 8: exec command builds /tmp/initial-context.md from session JSONLs + methodology."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(
+            project="my-proj",
+            methodology="/opt/vf-agent/methodologies/architect.md",
+        )
+        script = cmd[2]
+        assert "build_prior_context.py" in script
+        assert "--session-dir /sessions/my-proj/" in script
+        assert "--methodology /opt/vf-agent/methodologies/architect.md" in script
+        assert "--output /tmp/initial-context.md" in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_falls_back_on_build_failure(self):
+        """Phase 8: if build_prior_context.py fails, methodology is copied to /tmp/initial-context.md."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(
+            project="my-proj",
+            methodology="/opt/vf-agent/methodologies/architect.md",
+        )
+        script = cmd[2]
+        assert "|| cp /opt/vf-agent/methodologies/architect.md /tmp/initial-context.md" in script
+
+    @pytest.mark.asyncio
+    async def test_exec_command_passes_only_one_append_system_prompt(self):
+        """Phase 8: Pi only honors the LAST --append-system-prompt; pass exactly one (initial-context)."""
+        mgr = PodProcessManager(namespace="vafi-dev", image="img:latest")
+        cmd = mgr.build_exec_command(
+            project="my-proj",
+            methodology="/opt/vf-agent/methodologies/architect.md",
+        )
+        script = cmd[2]
+        # The pi invocation appears after `exec pi`. Inspect that segment only.
+        pi_segment = script.split("exec pi", 1)[1]
+        assert pi_segment.count("--append-system-prompt") == 1
+        # The single flag points at the merged file, NOT directly at the methodology.
+        assert "--append-system-prompt /tmp/initial-context.md" in pi_segment
+        assert "--append-system-prompt /opt/vf-agent/methodologies/architect.md" not in pi_segment
+
 
 class TestPodSession:
     @pytest.mark.asyncio

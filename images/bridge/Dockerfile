@@ -6,8 +6,10 @@ USER root
 # Install bridge dependencies
 RUN pip install --break-system-packages fastapi uvicorn httpx kubernetes_asyncio pyyaml
 
-# Copy bridge source
+# Copy bridge source + shared libs (pi_session_history is used by the
+# Phase 9 GET /v1/sessions/history endpoint)
 COPY src/bridge/ /opt/vf-bridge/src/bridge/
+COPY src/lib/ /opt/vf-bridge/src/lib/
 
 USER agent
 

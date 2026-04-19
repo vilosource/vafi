@@ -1,0 +1,1 @@
+Now add a transaction-history method that returns a list of all deposits and withdrawals in chronological order, each entry as a dict with keys "type", "amount", and "timestamp". Show only the updated class — no commentary.

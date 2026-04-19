@@ -152,6 +152,13 @@ bridge:
     pullPolicy: Always
   # Image used for locked agent pods (architect/web_designer) spawned by the bridge
   agentPiImage: "harbor.viloforge.com/vafi/vafi-agent-pi:latest"
+  # Phase 9: mount the same PVC the architect pods use, read-only, so the
+  # bridge can serve GET /v1/sessions/history from Pi's JSONL files.
+  # Only works when the PVC supports multi-mount OR bridge + architect pods
+  # co-locate on the same node (which is the case for dev's single-node k3s
+  # with RWO + local-path).
+  sessionsReadonlyMount: true
+  sessionsPVC: console-sessions
   service:
     port: 8080
   resources:

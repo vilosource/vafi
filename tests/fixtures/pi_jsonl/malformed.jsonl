@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"cccccccc-3333-3333-3333-333333333333","timestamp":"2026-04-12T09:00:00.000Z","cwd":"/sessions/fixture"}
+this is not json at all
+{"type":"message","id":"u3","parentId":"m3","timestamp":"2026-04-12T09:00:10.000Z","message":{"role":"user","content":[{"type":"text","text":"A valid user prompt."}],"timestamp":1776355210000}}
+{"incomplete json
+{"type":"message","id":"a3","parentId":"u3","timestamp":"2026-04-12T09:00:15.000Z","message":{"role":"assistant","content":[{"type":"text","text":"A valid assistant response."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-20250514","usage":{"input":50,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":60,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1776355215000,"responseId":"msg_3"}}
+
+{"empty": "object"}

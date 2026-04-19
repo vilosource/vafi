@@ -36,10 +36,11 @@ class SessionRecorder:
             body["session_id"] = session_id
         if cxdb_context_id is not None:
             body["cxdb_context_id"] = cxdb_context_id
+        # ended_at: pass through if given; otherwise leave unset so vtf stores null.
+        # (Previously this defaulted to now(), which caused acquire-time records
+        #  to look immediately-ended — breaks Phase 9 attribution UX.)
         if ended_at:
             body["ended_at"] = ended_at
-        else:
-            body["ended_at"] = datetime.now(timezone.utc).isoformat()
 
         try:
             async with httpx.AsyncClient() as client:
