@@ -18,9 +18,10 @@ from .lock_manager import LockManager, LockConflictError
 from .models import BridgeRequest, BridgeResponse, LockRequest, UnlockRequest
 from .pi_events import parse_pi_event
 from .pi_session import PiSession, PiSessionConfig, build_pi_env
-from .pod_process import PodProcessManager, PodSession
+from .pod_process import PodProcessManager, PodSession, _sanitize_k8s_name
 from .roles import load_roles, RoleConfig
 from .session_recorder import SessionRecorder
+from lib.pi_session_history import collect_prior_turns, apply_age_cap
 
 BRIDGE_NAMESPACE = os.environ.get("BRIDGE_NAMESPACE", "vafi-dev")
 AGENT_PI_IMAGE = os.environ.get("AGENT_PI_IMAGE", "harbor.viloforge.com/vafi/vafi-agent-pi:latest")
@@ -442,6 +443,22 @@ def create_app(roles_config: str | None = None) -> FastAPI:
                     except Exception as e:
                         logger.warning(f"Failed to sync session_id to vtf: {e}")
 
+                # Phase 9 Pre-Phase 0a: write SessionRecord so the history
+                # endpoint can later attribute this session_id to the user.
+                # Non-fatal — recording failure must not break lock acquire.
+                if session_recorder:
+                    try:
+                        await session_recorder.record(
+                            user_id=user["user_id"],
+                            project_id=body.project,
+                            role=body.role,
+                            channel="web",
+                            session_id=pod_session.session_id,
+                            ended_at=None,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to record SessionRecord on acquire: {e}")
+
         except Exception as e:
             logger.error(f"Failed to create pod session: {e}")
             await lock_manager.release(user, body.project, body.role)
@@ -493,6 +510,97 @@ def create_app(roles_config: str | None = None) -> FastAPI:
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail="Failed to fetch sessions")
             return resp.json()
+
+    @app.get("/v1/sessions/history")
+    async def sessions_history(request: Request):
+        """Phase 9: return project-scoped architect conversation history.
+
+        Reads Pi JSONL files from the PVC-mounted /sessions/{lowercased-project}/,
+        joins against vtf SessionRecord to attribute each user message to its
+        sender. Assistant messages are the architect's voice — not user-attributable.
+        """
+        from datetime import datetime, timezone
+
+        user = await require_auth(request)
+        project = request.query_params.get("project")
+        role = request.query_params.get("role", "architect")
+        try:
+            limit = int(request.query_params.get("limit", "20"))
+        except ValueError:
+            limit = 20
+        try:
+            max_age_days = int(request.query_params.get("max_age_days", "14"))
+        except ValueError:
+            max_age_days = 14
+
+        if not project:
+            raise HTTPException(status_code=400, detail="'project' query parameter is required")
+        check_project_membership(user, project)
+
+        # 1) Collect Pi JSONL turns from the PVC.
+        from pathlib import Path
+        slug = _sanitize_k8s_name(project)
+        # Read env at request-time so tests can monkey-patch SESSIONS_DIR.
+        sessions_root = os.environ.get("SESSIONS_DIR", SESSIONS_DIR)
+        session_dir = Path(sessions_root) / slug
+        turns = collect_prior_turns(session_dir, max_sessions=10)
+        turns = apply_age_cap(turns, datetime.now(timezone.utc).isoformat(), max_age_days)
+        truncated = False
+        # Cap to limit pairs (each pair = user+assistant). limit * 2 messages total.
+        if len(turns) > limit:
+            turns = turns[-limit:]
+            truncated = True
+
+        # 2) Fetch vtf SessionRecords for this project + role to map session_id -> username.
+        sid_to_user: dict[str, dict] = {}
+        vtf_url = os.environ.get("VTF_API_URL", "http://vtf-api.vtf-dev.svc.cluster.local:8000")
+        auth_header = request.headers.get("Authorization", "")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{vtf_url}/v1/sessions/project/{project}/",
+                    headers={"Authorization": auth_header},
+                    params={"role": role},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for rec in data.get("results", []):
+                        sid = rec.get("session_id")
+                        if sid:
+                            sid_to_user[sid] = {
+                                "username": rec.get("username"),
+                                "user_id": rec.get("user_id"),
+                            }
+                else:
+                    logger.warning(f"vtf /v1/sessions/project returned {resp.status_code}")
+        except Exception as e:
+            # Non-fatal — return turns without attribution rather than failing the whole request.
+            logger.warning(f"vtf SessionRecord fetch failed: {e}")
+
+        # 3) Flatten turns into message-level list, attributing user messages.
+        messages = []
+        for ts, user_text, asst_text, sid in turns:
+            attrib = sid_to_user.get(sid, {})
+            messages.append({
+                "role": "user",
+                "text": user_text,
+                "timestamp": ts,
+                "session_id": sid,
+                "username": attrib.get("username"),
+            })
+            messages.append({
+                "role": "assistant",
+                "text": asst_text,
+                "timestamp": ts,
+                "session_id": sid,
+                "username": None,
+            })
+
+        return {
+            "turns": messages,
+            "truncated": truncated,
+        }
 
     @app.post("/v1/prompt/stream")
     async def prompt_stream(body: BridgeRequest, request: Request):

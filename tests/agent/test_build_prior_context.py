@@ -60,10 +60,11 @@ def populated_dir(tmp_path: Path) -> Path:
 def test_parse_single_turn():
     turns = bpc.parse_session_jsonl(FIXTURES / "single-turn.jsonl")
     assert len(turns) == 1
-    ts, user, asst = turns[0]
+    ts, user, asst, sid = turns[0]
     assert user == "What is the capital of Japan?"
     assert asst == "The capital of Japan is Tokyo."
     assert ts.startswith("2026-04-10T")
+    assert sid == "aaaaaaaa-1111-1111-1111-111111111111"
 
 
 def test_parse_multi_turn_skips_tool_calls():
@@ -82,6 +83,9 @@ def test_parse_multi_turn_skips_tool_calls():
     # First assistant reply contains text from the tool-calling message (NOT the toolCall dict)
     assert turns[0][2] == "I will use the bash tool to list files."
     assert turns[2][2] == "I have added a LICENSE file with the MIT license text."
+    # All turns in a single file share the same session_id
+    assert len({t[3] for t in turns}) == 1
+    assert turns[0][3] == "bbbbbbbb-2222-2222-2222-222222222222"
 
 
 def test_parse_malformed_jsonl_skips_bad_lines():
@@ -90,6 +94,7 @@ def test_parse_malformed_jsonl_skips_bad_lines():
     assert len(turns) == 1
     assert turns[0][1] == "A valid user prompt."
     assert turns[0][2] == "A valid assistant response."
+    assert turns[0][3] == "cccccccc-3333-3333-3333-333333333333"
 
 
 def test_parse_empty_file():
@@ -137,7 +142,7 @@ def test_format_empty_turns():
 
 
 def test_format_renders_markdown():
-    out = bpc.format_prior_section([("2026-01-01T00:00:00Z", "Hi", "Hello!")])
+    out = bpc.format_prior_section([("2026-01-01T00:00:00Z", "Hi", "Hello!", "sid-1")])
     assert "# Continuation from previous sessions" in out
     assert "## User (2026-01-01T00:00:00Z)" in out
     assert "Hi" in out
@@ -148,13 +153,13 @@ def test_format_renders_markdown():
 # ─── trim_to_byte_cap ─────────────────────────────────────────────────────
 
 def test_trim_under_cap_is_noop():
-    turns = [("t1", "a", "b")]
+    turns = [("t1", "a", "b", "sid")]
     assert bpc.trim_to_byte_cap(turns, max_bytes=10_000) == turns
 
 
 def test_trim_drops_oldest_first():
     # build 10 trivial turns; shrink to ~400 bytes
-    turns = [(f"t{i}", f"user-{i}", f"asst-{i}" * 20) for i in range(10)]
+    turns = [(f"t{i}", f"user-{i}", f"asst-{i}" * 20, f"sid-{i}") for i in range(10)]
     trimmed = bpc.trim_to_byte_cap(turns, max_bytes=400)
     assert len(trimmed) < len(turns)
     # the most recent turn is retained
@@ -163,7 +168,7 @@ def test_trim_drops_oldest_first():
 
 def test_trim_truncates_single_huge_turn():
     big_asst = "x" * 20_000
-    turns = [("t", "short-user", big_asst)]
+    turns = [("t", "short-user", big_asst, "sid")]
     trimmed = bpc.trim_to_byte_cap(turns, max_bytes=500)
     assert len(trimmed) == 1
     assert trimmed[0][1] == "short-user"  # user text preserved
@@ -192,6 +197,28 @@ def test_build_respects_max_prompts(populated_dir, methodology):
     assert "Continuation from previous sessions" in out
     assert "What is the capital of Japan?" not in out  # oldest dropped
     assert "Add a LICENSE file with the MIT license." in out  # most recent kept
+
+
+def test_build_respects_max_age_days(populated_dir, methodology):
+    # Fixtures have timestamps 2026-04-10 and 2026-04-11. With a 1-day cap
+    # against "now = 2026-04-12T12:00:00", only 2026-04-11 turns survive.
+    # But the `build` function uses datetime.now() for its cutoff — so we
+    # test at the lib level instead (cleaner).
+    from lib.pi_session_history import apply_age_cap
+    turns = [
+        ("2026-01-01T00:00:00Z", "old user", "old asst", "sid-old"),
+        ("2026-04-15T00:00:00Z", "recent user", "recent asst", "sid-recent"),
+    ]
+    capped = apply_age_cap(turns, "2026-04-19T00:00:00+00:00", max_age_days=14)
+    assert len(capped) == 1
+    assert capped[0][1] == "recent user"
+
+
+def test_apply_age_cap_disabled():
+    from lib.pi_session_history import apply_age_cap
+    turns = [("2020-01-01T00:00:00Z", "very old", "reply", "sid")]
+    assert apply_age_cap(turns, "2026-04-19T00:00:00+00:00", max_age_days=0) == turns
+    assert apply_age_cap(turns, "2026-04-19T00:00:00+00:00", max_age_days=None) == turns
 
 
 # ─── main (CLI entry) ─────────────────────────────────────────────────────

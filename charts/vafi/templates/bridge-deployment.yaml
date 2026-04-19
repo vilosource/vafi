@@ -124,8 +124,21 @@ spec:
           volumeMounts:
             - name: roles-config
               mountPath: /app/config
+            {{- if .Values.bridge.sessionsReadonlyMount }}
+            # Phase 9: read-only mount of the agent sessions PVC so the bridge
+            # can serve GET /v1/sessions/history from Pi's JSONL files.
+            - name: sessions
+              mountPath: /sessions
+              readOnly: true
+            {{- end }}
       volumes:
         - name: roles-config
           configMap:
             name: bridge-roles
+        {{- if .Values.bridge.sessionsReadonlyMount }}
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: {{ .Values.bridge.sessionsPVC | default "console-sessions" }}
+            readOnly: true
+        {{- end }}
 {{- end }}
