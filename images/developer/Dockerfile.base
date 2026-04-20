@@ -107,7 +107,10 @@ RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --d
 RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 # --- MemPalace (installs chromadb transitively — needed before prefetch below) ---
-RUN pip install --break-system-packages git+https://github.com/vilosource/mempalace.git@develop
+# Pinned to a fork commit so cache invalidates on bump. Bump the SHA to pull
+# new fork/develop fixes; see images/developer/Dockerfile.base history.
+ARG MEMPALACE_REF=6fd1d5b
+RUN pip install --break-system-packages "git+https://github.com/vilosource/mempalace.git@${MEMPALACE_REF}"
 
 # --- Pre-fetch chromadb ONNX embedding model (fast & offline mempalace startup) ---
 RUN mkdir -p /home/agent/.mempalace \
