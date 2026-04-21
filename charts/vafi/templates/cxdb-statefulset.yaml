@@ -57,7 +57,9 @@ spec:
             periodSeconds: {{ .Values.cxdb.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.cxdb.livenessProbe.failureThreshold }}
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: cxdb-data
       spec:
         accessModes: ["ReadWriteOnce"]
