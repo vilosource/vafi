@@ -73,14 +73,18 @@ Base and claude are pinned to versioned tags and rebuilt infrequently. Only the 
 
 ## Deployment
 
-vafi deploys via Helm. Environment-specific values (registry, domains, credentials) live in a separate private deploy repo.
+vafi is deployed via **Argo CD** (GitOps). The Helm chart in `charts/vafi/` is rendered by Argo CD using values from the separate `vafi-deploy` repo (`environments/dev.yaml`, `environments/prod.yaml`).
+
+To roll out a new agent image:
 
 ```bash
-helm upgrade --install vafi charts/vafi/ \
-  --namespace vafi-dev \
-  -f environments/dev.yaml \
-  --set image.agent.tag=<git-sha>
+# 1. Build + push (vafi-deploy/scripts/release.sh dev)
+# 2. Edit vafi-deploy/environments/dev.yaml: image.agent.tag=<git-sha>
+# 3. Commit + push to vafi-deploy main — Argo CD syncs within ~3 min
+#    (force immediate: argocd app sync vafi-dev)
 ```
+
+Direct `helm upgrade` and `kubectl set image` will be reverted by Argo CD's selfHeal.
 
 The Helm chart supports:
 - Executor and judge as separate deployments with independent replica counts
