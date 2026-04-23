@@ -138,3 +138,4 @@ MIT
 
 <!-- webhook pipeline validated 2026-04-23 -->
 
+<!-- multi-product pipeline test 2026-04-23 -->
