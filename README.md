@@ -135,3 +135,6 @@ python -m pytest tests/ -v    # 112 tests
 ## License
 
 MIT
+
+<!-- webhook pipeline validated 2026-04-23 -->
+
