@@ -1,0 +1,6 @@
+{
+  "name": "mempalace",
+  "version": "tracks MEMPALACE_REF in Dockerfile.base",
+  "description": "Auto-save session memories to the mempalace ChromaDB palace on Stop and PreCompact events.",
+  "priority": 50
+}

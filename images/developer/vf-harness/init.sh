@@ -47,11 +47,22 @@ fi
 # --- Common: mempalace auto-init ---
 # mempalace init prints a multi-line banner to stdout. That would mangle the
 # JSON output of /opt/vf-harness/run.sh in non-interactive use. Suppress all
-# of it — we log our own short "Auto-initializing" note to stderr.
+# of it — we log our own short notes to stderr.
+#
+# Two-step: (1) write config.json via `mempalace init`, then (2) force-create
+# the ChromaDB collection at palace_path. Without step 2, MCP search on a
+# never-written palace returns "No palace found" instead of an empty result,
+# which looks like a broken install.
 
-if [ ! -d "$HOME/.mempalace/palace" ] && [ "${MEMPALACE_AUTO_INIT:-false}" = "true" ]; then
-  echo >&2 "[vf-harness] Auto-initializing empty mempalace"
-  mempalace init /workspace --yes >/dev/null 2>&1 || true
+if [ "${MEMPALACE_AUTO_INIT:-false}" = "true" ]; then
+  if [ ! -f "$HOME/.mempalace/config.json" ]; then
+    echo >&2 "[vf-harness] Auto-initializing mempalace config"
+    mempalace init /workspace --yes >/dev/null 2>&1 || true
+  fi
+  if [ ! -d "$HOME/.mempalace/palace" ]; then
+    echo >&2 "[vf-harness] Seeding empty mempalace collection"
+    python3 -c "from mempalace.palace import get_collection; get_collection('$HOME/.mempalace/palace')" >/dev/null 2>&1 || true
+  fi
 fi
 
 # --- Launch ---

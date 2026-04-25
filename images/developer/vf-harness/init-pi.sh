@@ -26,11 +26,47 @@ with open(settings_path, "w") as f:
     json.dump(settings, f, indent=2)
 PYEOF
 
-# Refresh mempalace extension from image (in case it was updated)
-cp /opt/vf-harness/pi-extras/extensions/mempalace-hooks.ts \
-   "$HOME/.pi/agent/extensions/mempalace-hooks.ts" 2>/dev/null || true
 cp /opt/vf-harness/pi-extras/APPEND_SYSTEM.md \
    "$HOME/.pi/agent/APPEND_SYSTEM.md" 2>/dev/null || true
+
+# --- Wire hook bundles into ~/.pi/agent/extensions/ ---
+# See /opt/vf-harness/hooks.d/README.md for the bundle spec.
+# Idempotent: strip prior vf-managed extensions, copy fresh from active bundles.
+rm -f "$HOME/.pi/agent/extensions/vf-"*.ts 2>/dev/null || true
+
+mkdir -p "$HOME/.vf-hook-state"
+chmod 700 "$HOME/.vf-hook-state" 2>/dev/null || true
+
+if [ "${VF_DISABLE_HOOKS:-}" = "all" ]; then
+  echo >&2 "[vf-harness] hooks: disabled via VF_DISABLE_HOOKS=all"
+else
+  # User-tree bundles (~/.vf-hooks.d/) override image-tree (/opt/vf-harness/hooks.d/)
+  # when they share a name. Track seen names to dedupe.
+  _seen=""
+  for root in /opt/vf-harness/hooks.d "$HOME/.vf-hooks.d"; do
+    [ -d "$root" ] || continue
+    for bdir in "$root"/*/; do
+      [ -d "$bdir" ] || continue
+      bname=$(basename "$bdir")
+      case ",${VF_DISABLE_HOOKS:-}," in
+        *",${bname},"*)
+          echo >&2 "[vf-harness] hooks: skipping ${bname} (disabled)"
+          continue ;;
+      esac
+      ext_dir="${bdir}pi/extensions"
+      [ -d "$ext_dir" ] || continue
+      mkdir -p "$HOME/.vf-hook-state/${bname}"
+      # Copy all .ts files with vf-<bundle>- prefix
+      wired=0
+      for src in "$ext_dir"/*.ts; do
+        [ -f "$src" ] || continue
+        fname=$(basename "$src")
+        cp "$src" "$HOME/.pi/agent/extensions/vf-${bname}-${fname}" 2>/dev/null && wired=1
+      done
+      [ $wired -eq 1 ] && echo >&2 "[vf-harness] hooks: wired ${bname} (pi)"
+    done
+  done
+fi
 
 # --- Auth ---
 # Pi auto-discovers providers from env vars at runtime AND can override

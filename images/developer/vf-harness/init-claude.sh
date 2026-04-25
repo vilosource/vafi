@@ -58,6 +58,22 @@ if mw_host:
         },
     }
 
+vtf_url = os.environ.get("VF_VTF_MCP_URL", "")
+vtf_token = os.environ.get("VF_VTF_TOKEN", "")
+if vtf_url and vtf_token:
+    servers["vtf"] = {
+        "type": "http",
+        "url": vtf_url,
+        "headers": {"Authorization": f"Token {vtf_token}"},
+    }
+
+playwright_url = os.environ.get("VF_PLAYWRIGHT_MCP_URL", "")
+if playwright_url:
+    servers["playwright"] = {
+        "type": "http",
+        "url": playwright_url,
+    }
+
 projects = cfg.setdefault("projects", {})
 projects["/workspace"] = {
     "hasTrustDialogAccepted": True,
@@ -68,13 +84,97 @@ with open(cfg_path, "w") as f:
     json.dump(cfg, f, indent=2)
 
 os.makedirs(os.path.expanduser("~/.claude"), exist_ok=True)
-with open(os.path.expanduser("~/.claude/settings.json"), "w") as f:
-    json.dump({"skipDangerousModePermissionPrompt": True}, f, indent=2)
 PYEOF
 
 # Writable runtime dirs Claude expects
 for d in session-env projects plans history cache; do
   mkdir -p "$HOME/.claude/$d"
 done
+
+# --- Wire hook bundles into ~/.claude/settings.json ---
+# See /opt/vf-harness/hooks.d/README.md for the bundle spec.
+python3 <<'PYEOF'
+import json, os, sys
+
+HOME = os.path.expanduser("~")
+STATE_ROOT = f"{HOME}/.vf-hook-state"
+os.makedirs(STATE_ROOT, exist_ok=True)
+try:
+    os.chmod(STATE_ROOT, 0o700)
+except OSError:
+    pass
+
+settings = {"skipDangerousModePermissionPrompt": True}
+
+disabled_raw = os.environ.get("VF_DISABLE_HOOKS", "").strip()
+disable_all = (disabled_raw == "all")
+disabled_set = set(
+    x.strip() for x in disabled_raw.split(",") if x.strip() and x.strip() != "all"
+)
+
+def load_bundles():
+    seen = {}
+    for root in ["/opt/vf-harness/hooks.d", f"{HOME}/.vf-hooks.d"]:
+        if not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root)):
+            bdir = os.path.join(root, name)
+            if not os.path.isdir(bdir):
+                continue
+            # User-tree bundle with same name overrides image-tree bundle.
+            seen[name] = bdir
+    entries = list(seen.items())
+
+    def priority(entry):
+        name, bdir = entry
+        meta = os.path.join(bdir, "bundle.json")
+        try:
+            with open(meta) as f:
+                return int(json.load(f).get("priority", 50))
+        except Exception:
+            return 50
+
+    entries.sort(key=lambda e: (priority(e), e[0]))
+    return entries
+
+def subst(text, bundle_dir, bundle_name):
+    state_dir = f"{STATE_ROOT}/{bundle_name}"
+    os.makedirs(state_dir, exist_ok=True)
+    return (text
+        .replace("{{DIR}}", bundle_dir)
+        .replace("{{BUNDLE}}", bundle_name)
+        .replace("{{STATE}}", state_dir)
+        .replace("{{WORKSPACE}}", "/workspace")
+        .replace("{{HOME}}", HOME))
+
+merged_hooks = {}
+if not disable_all:
+    for name, bdir in load_bundles():
+        if name in disabled_set:
+            print(f"[vf-harness] hooks: skipping {name} (disabled)", file=sys.stderr)
+            continue
+        harness_dir = os.path.join(bdir, "claude")
+        frag_path = os.path.join(harness_dir, "hooks.json")
+        if not os.path.isfile(frag_path):
+            continue
+        try:
+            with open(frag_path) as f:
+                raw = f.read()
+            frag = json.loads(subst(raw, harness_dir, name))
+        except Exception as e:
+            print(f"[vf-harness] WARN: bundle {name} skipped (invalid claude/hooks.json: {e})", file=sys.stderr)
+            continue
+        for event, entries in (frag.get("hooks") or {}).items():
+            merged_hooks.setdefault(event, []).extend(entries)
+        print(f"[vf-harness] hooks: wired {name} (claude)", file=sys.stderr)
+else:
+    print("[vf-harness] hooks: disabled via VF_DISABLE_HOOKS=all", file=sys.stderr)
+
+if merged_hooks:
+    settings["hooks"] = merged_hooks
+
+with open(f"{HOME}/.claude/settings.json", "w") as f:
+    json.dump(settings, f, indent=2)
+PYEOF
 
 export VF_HARNESS=claude

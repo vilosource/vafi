@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# vf-hooks — inspect hook bundle wiring in this container.
+#
+# Usage:
+#   vf-hooks              # same as: vf-hooks status
+#   vf-hooks status       # list bundles, per-harness variants, disabled state
+
+set -e
+
+HOME_DIR="${HOME:-/home/agent}"
+HARNESS="${VF_HARNESS:-unknown}"
+CMD="${1:-status}"
+
+is_disabled() {
+  local name="$1"
+  case ",${VF_DISABLE_HOOKS:-}," in
+    *",all,"*) return 0 ;;
+    *",${name},"*) return 0 ;;
+  esac
+  return 1
+}
+
+list_variants() {
+  local bdir="$1"
+  local out=""
+  for h in claude pi codex gemini; do
+    if [ -d "${bdir}/${h}" ]; then
+      [ -n "$out" ] && out="${out},${h}" || out="${h}"
+    fi
+  done
+  echo "${out:-none}"
+}
+
+cmd_status() {
+  echo "vf-harness: ${HARNESS}"
+  if [ -n "${VF_DISABLE_HOOKS:-}" ]; then
+    echo "VF_DISABLE_HOOKS: ${VF_DISABLE_HOOKS}"
+  fi
+  echo
+
+  for root in /opt/vf-harness/hooks.d "${HOME_DIR}/.vf-hooks.d"; do
+    echo "== ${root} =="
+    if [ ! -d "$root" ]; then
+      echo "  (directory not present)"
+      echo
+      continue
+    fi
+    local any=0
+    for bdir in "${root}"/*/; do
+      [ -d "$bdir" ] || continue
+      any=1
+      local name
+      name=$(basename "$bdir")
+      local variants
+      variants=$(list_variants "$bdir")
+      local tag=""
+      if is_disabled "$name"; then
+        tag=" [DISABLED]"
+      fi
+      echo "  ${name}${tag}  (${variants})"
+    done
+    [ $any -eq 0 ] && echo "  (no bundles)"
+    echo
+  done
+
+  echo "== Claude settings hooks =="
+  if [ -f "${HOME_DIR}/.claude/settings.json" ]; then
+    python3 -c "
+import json, sys
+try:
+    with open('${HOME_DIR}/.claude/settings.json') as f:
+        s = json.load(f)
+    hooks = s.get('hooks') or {}
+    if not hooks:
+        print('  (none)')
+    else:
+        for event, entries in hooks.items():
+            for e in entries:
+                for h in (e.get('hooks') or []):
+                    print(f\"  {event}: {h.get('command','?')}\")
+except Exception as ex:
+    print(f'  (error reading settings.json: {ex})')
+"
+  else
+    echo "  (no ~/.claude/settings.json)"
+  fi
+  echo
+
+  echo "== Pi extensions (vf-managed) =="
+  if [ -d "${HOME_DIR}/.pi/agent/extensions" ]; then
+    local found=0
+    for f in "${HOME_DIR}/.pi/agent/extensions/vf-"*.ts; do
+      [ -f "$f" ] || continue
+      found=1
+      echo "  $(basename "$f")"
+    done
+    [ $found -eq 0 ] && echo "  (none)"
+  else
+    echo "  (no ~/.pi/agent/extensions)"
+  fi
+  echo
+
+  echo "== State dir =="
+  if [ -d "${HOME_DIR}/.vf-hook-state" ]; then
+    for d in "${HOME_DIR}/.vf-hook-state"/*/; do
+      [ -d "$d" ] || continue
+      echo "  $(basename "$d")"
+      if [ -f "${d}log" ]; then
+        echo "    log: $(wc -l < "${d}log" 2>/dev/null || echo '?') lines"
+      fi
+    done
+  else
+    echo "  (not created yet)"
+  fi
+}
+
+case "$CMD" in
+  status|"") cmd_status ;;
+  *) echo "usage: vf-hooks [status]" >&2; exit 2 ;;
+esac

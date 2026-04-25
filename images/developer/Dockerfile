@@ -1,12 +1,24 @@
-# vafi-developer-base — shared body for all local laptop developer images.
+# vafi-developer — single consolidated image for cluster-resident dev contexts.
 #
-# Scope: AI-agnostic devtools + mempalace + generic vf-harness dispatcher scripts.
-# Leaves (Dockerfile.claude|pi|gemini) add exactly one harness CLI on top
-# and set VF_HARNESS so /opt/vf-harness/init.sh picks the right branch.
+# Built once per push to vilosource/vafi:main by vafi-developer-sensor.yaml,
+# tagged with the full git SHA at harbor.viloforge.com/vafi/vafi-developer.
+# Consumed by the per-context StatefulSets defined in vafi-deploy (vfdev,
+# ogcli, future siblings).
 #
-# Inherits from vafi-base (see KU-3 in developer-images-RUMSFELD.md) — gives us
-# the `agent` uid-1001 user, WORKDIR, node:20-bookworm-slim, and system packages
-# (git, curl, openssh-client, jq, python3, yarn) for free.
+# Harness selection happens at RUNTIME, not build time. All three CLIs
+# (claude, pi, gemini) are pre-installed; the StatefulSet sets
+# VF_HARNESS=<harness> and /opt/vf-harness/init.sh dispatches accordingly.
+# This is design O1: one Sensor, one image, one tag, runtime-selected
+# variant. The local-laptop chain (Dockerfile.base + Dockerfile.<harness>)
+# stays in this directory for the docker-on-host launcher path until
+# vfdev / ogcli migrate to the cluster, at which point those go away.
+#
+# This Dockerfile is design O2 "flattened": FROM vafi-base directly, no
+# separate vafi-developer-base image in Harbor. Mirrors the chain depth
+# of vafi-claude / vafi-bridge.
+#
+# Design: viloforge-platform/docs/developer-pods-DESIGN.md
+# Build context: repo root. Sensor passes REGISTRY build-arg.
 
 ARG REGISTRY=vafi
 FROM ${REGISTRY}/vafi-base:latest
@@ -70,13 +82,6 @@ RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go
 ENV PATH=/usr/local/go/bin:/home/agent/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV GOPATH=/home/agent/go
 
-# --- Docker CE CLI (for nested docker via /var/run/docker.sock bind-mount) ---
-RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
-      > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
-    && rm -rf /var/lib/apt/lists/*
-
 # --- Azure CLI + azcopy ---
 RUN pip install --break-system-packages azure-cli
 RUN curl -sL https://aka.ms/downloadazcopy-v10-linux -o /tmp/azcopy.tar.gz \
@@ -108,7 +113,7 @@ RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm
 
 # --- MemPalace (installs chromadb transitively — needed before prefetch below) ---
 # Pinned to a fork commit so cache invalidates on bump. Bump the SHA to pull
-# new fork/develop fixes; see images/developer/Dockerfile.base history.
+# new fork/develop fixes.
 ARG MEMPALACE_REF=6fd1d5b
 RUN pip install --break-system-packages "git+https://github.com/vilosource/mempalace.git@${MEMPALACE_REF}"
 
@@ -119,18 +124,52 @@ RUN mkdir -p /home/agent/.mempalace \
                    ef._download_model_if_not_exists()" \
     && chown -R agent:agent /home/agent/.mempalace
 
+# --- All three harness CLIs (runtime selection via VF_HARNESS) ---
+# Image carries claude + pi + gemini. The StatefulSet sets VF_HARNESS and
+# init.sh execs the matching init-<harness>.sh. Marginal image size cost
+# (~150-200MB total) is negligible vs the ~1.5GB devtools layer above and
+# saves us three Sensors / three Harbor repos / three tag streams.
+
+ARG CLAUDE_VERSION=latest
+RUN if [ "$CLAUDE_VERSION" = "latest" ]; then \
+      npm install -g @anthropic-ai/claude-code; \
+    else \
+      npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION}; \
+    fi
+
+ARG PI_VERSION=latest
+RUN if [ "$PI_VERSION" = "latest" ]; then \
+      npm install -g @mariozechner/pi-coding-agent; \
+    else \
+      npm install -g @mariozechner/pi-coding-agent@${PI_VERSION}; \
+    fi
+# pi-mcp-adapter writes settings.json under root's home; migrate to agent's.
+RUN pi install npm:pi-mcp-adapter \
+    && mkdir -p /home/agent/.pi/agent \
+    && cp /root/.pi/agent/settings.json /home/agent/.pi/agent/settings.json \
+    && chown -R agent:agent /home/agent/.pi
+
+ARG GEMINI_VERSION=latest
+RUN if [ "$GEMINI_VERSION" = "latest" ]; then \
+      npm install -g @google/gemini-cli; \
+    else \
+      npm install -g @google/gemini-cli@${GEMINI_VERSION}; \
+    fi
+
+# Hand global npm dirs to agent so any of the three CLIs can be re-installed
+# at runtime without EACCES (mirrors the per-harness leaves).
+RUN chown -R agent:agent /usr/local/lib/node_modules /usr/local/bin
+
 # --- vf-harness dispatcher scripts + pi extras + hook bundles ---
-COPY vf-harness/ /opt/vf-harness/
-COPY pi-extras/  /opt/vf-harness/pi-extras/
-COPY hooks.d/    /opt/vf-harness/hooks.d/
+# Build context is the repo root (Sensor passes build-context="."), so paths
+# are relative to /vafi/, not /vafi/images/developer/.
+COPY images/developer/vf-harness/ /opt/vf-harness/
+COPY images/developer/pi-extras/  /opt/vf-harness/pi-extras/
+COPY images/developer/hooks.d/    /opt/vf-harness/hooks.d/
 RUN chmod +x /opt/vf-harness/*.sh /opt/vf-harness/vf-hooks \
     && ln -sf /opt/vf-harness/vf-hooks /usr/local/bin/vf-hooks
 
 # --- Fetch mempalace hook scripts pinned to $MEMPALACE_REF (matches pip install above) ---
-# The hooks.d/mempalace/claude/hooks.json fragment references save_hook.sh and
-# precompact_hook.sh; both come from the mempalace repo's hooks/ dir (not shipped
-# by pip). Pinning to the same ref keeps the script semantics in sync with the
-# installed python package.
 RUN for f in mempal_save_hook.sh mempal_precompact_hook.sh; do \
       curl -fsSL "https://raw.githubusercontent.com/vilosource/mempalace/${MEMPALACE_REF}/hooks/$f" \
         -o "/opt/vf-harness/hooks.d/mempalace/claude/${f#mempal_}"; \
@@ -148,17 +187,22 @@ RUN az version --output tsv 2>/dev/null | head -1 \
     && uv --version \
     && gh --version | head -1 \
     && glab --version | head -1 \
-    && docker --version \
     && azcopy --version \
     && yq --version \
     && fzf --version \
+    && claude --version \
+    && pi --version \
+    && gemini --version \
     && python3 -c "import mempalace; print('mempalace: OK')" \
-    && echo "vafi-developer-base tools verified"
+    && echo "vafi-developer (consolidated) tools verified"
 
 USER agent
 
 WORKDIR /workspace
 
-# Default entrypoint dispatches on $VF_HARNESS; leaves override VF_HARNESS via ENV.
+# VF_HARNESS is intentionally NOT set in the image. The StatefulSet must
+# provide it (claude | pi | gemini) so init.sh can dispatch. init.sh
+# refuses to run with an empty / unrecognized VF_HARNESS — the failure is
+# loud and immediate at pod startup rather than mid-session.
 ENTRYPOINT ["/opt/vf-harness/init.sh"]
 CMD ["bash"]
