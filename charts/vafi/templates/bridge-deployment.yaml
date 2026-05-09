@@ -138,7 +138,7 @@ spec:
         {{- if .Values.bridge.sessionsReadonlyMount }}
         - name: sessions
           persistentVolumeClaim:
-            claimName: {{ .Values.bridge.sessionsPVC | default "console-sessions" }}
+            claimName: {{ .Values.bridge.sessionsPVC | default (printf "%s-sessions" (include "vafi.fullname" .)) }}
             readOnly: true
         {{- end }}
 {{- end }}

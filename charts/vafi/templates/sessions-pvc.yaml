@@ -6,7 +6,7 @@ metadata:
     {{- include "vafi.labels" . | nindent 4 }}
 spec:
   accessModes:
-    - ReadWriteOnce
+    {{- toYaml (.Values.sessions.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
   {{- if .Values.sessions.storageClassName }}
   storageClassName: {{ .Values.sessions.storageClassName | quote }}
   {{- end }}

@@ -163,7 +163,9 @@ bridge:
   # co-locate on the same node (which is the case for dev's single-node k3s
   # with RWO + local-path).
   sessionsReadonlyMount: true
-  sessionsPVC: console-sessions
+  # Empty default = chart's own sessions PVC (`<fullname>-sessions`). Override
+  # only if the bridge needs to read a PVC owned outside this release.
+  sessionsPVC: ""
   service:
     port: 8080
   resources:
@@ -255,6 +257,12 @@ cxdbMcp:
 sessions:
   storage: 10Gi
   storageClassName: ""
+  # PVC accessModes. Default RWO matches single-node clusters (e.g. local-path
+  # dev). Multi-node clusters where executor + executor-pi + bridge all want to
+  # mount this volume need ReadWriteMany — Longhorn provisions an RWX volume
+  # via its share-manager when this is set.
+  accessModes:
+    - ReadWriteOnce
 
 # ---------------------------------------------------------------------------
 # Ingress — external access to CXDB web UI
