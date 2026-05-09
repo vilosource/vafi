@@ -54,6 +54,7 @@ class TestVtfWorkSource:
         self.mock_client.tasks = AsyncMock()
         self.mock_client.agents = AsyncMock()
         self.mock_client.projects = AsyncMock()
+        self.mock_client.reviews = AsyncMock()
         self.work_source = VtfWorkSource(self.mock_client)
 
     async def test_register(self):
@@ -101,6 +102,29 @@ class TestVtfWorkSource:
         result = await self.work_source.claim("task_123", "agent_123")
         assert isinstance(result, TaskInfo)
         assert result.id == "task_123"
+
+    async def test_poll_reviews_calls_reviews_pending_not_tasks_list(self):
+        """Regression for vtaskforge#6.
+
+        poll_reviews must hit the dedicated /v2/reviews/pending/ endpoint
+        (via reviews.pending) so non-member judge agents see fleet-wide
+        work. Calling tasks.list(status='pending_completion_review')
+        applies project-membership scoping and silently returns empty.
+        """
+        review_task = _make_sdk_task(id="task_review", title="Review me", status="pending_completion_review")
+        self.mock_client.reviews.pending.return_value = _make_paged([review_task])
+
+        result = await self.work_source.poll_reviews("agent_judge")
+        assert isinstance(result, TaskInfo)
+        assert result.id == "task_review"
+        self.mock_client.reviews.pending.assert_awaited()
+        # Make sure we did NOT fall back to the broken path
+        self.mock_client.tasks.list.assert_not_awaited()
+
+    async def test_poll_reviews_returns_none_when_empty(self):
+        self.mock_client.reviews.pending.return_value = _make_paged([])
+        result = await self.work_source.poll_reviews("agent_judge")
+        assert result is None
 
     async def test_heartbeat(self):
         await self.work_source.heartbeat("task_123")

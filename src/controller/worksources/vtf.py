@@ -56,8 +56,16 @@ class VtfWorkSource:
         return None
 
     async def poll_reviews(self, agent_id: str) -> TaskInfo | None:
-        """Poll for tasks pending completion review (judge work)."""
-        review_result = await self._client.tasks.list(status="pending_completion_review")
+        """Poll for tasks pending completion review (judge work).
+
+        Uses the dedicated /v2/reviews/pending/ endpoint (vtaskforge#6) so
+        the per-agent token sees fleet-wide review work even though the
+        agent's user is not a member of every project the tasks live in.
+        Generic tasks.list(status='pending_completion_review') applies
+        scope_queryset_to_user_projects on the server and silently returns
+        empty for non-member agents — that path is what bit production.
+        """
+        review_result = await self._client.reviews.pending()
         if review_result.items:
             return self._sdk_task_to_info(review_result.items[0])
         return None
