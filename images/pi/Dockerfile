@@ -1,4 +1,5 @@
 ARG REGISTRY=vafi
+ARG BASE_TAG=latest
 
 # Stage 1: Build cxtx from cxdb source
 FROM rust:1.86-bookworm AS cxtx-builder
@@ -9,7 +10,8 @@ RUN cargo build -p cxtx --release
 
 # Stage 2: vafi-pi image
 ARG REGISTRY
-FROM ${REGISTRY}/vafi-base:latest
+ARG BASE_TAG
+FROM ${REGISTRY}/vafi-base:${BASE_TAG}
 
 ARG PI_VERSION=0.59.0
 USER root

@@ -110,7 +110,7 @@ spec:
             - name: ROLES_CONFIG
               value: /app/config/roles.yaml
             - name: AGENT_PI_IMAGE
-              value: {{ .Values.bridge.agentPiImage | quote }}
+              value: {{ include "vafi.bridgeAgentPiImage" . | quote }}
             - name: VTF_MCP_URL
               value: {{ .Values.vtf.mcpUrl | quote }}
           livenessProbe:

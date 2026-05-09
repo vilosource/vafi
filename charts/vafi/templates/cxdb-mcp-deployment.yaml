@@ -1,0 +1,60 @@
+{{- if .Values.cxdbMcp.enabled }}
+# cxdb-mcp — MCP server exposing the vafi cxdb store to agents.
+# Migrated from vilosource/vafi-deploy:cxdb-mcp/ on 2026-05-09 so cxdb-mcp
+# lifecycle stays locked to the vafi chart it belongs to.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vafi.fullname" . }}-cxdb-mcp
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb-mcp") | nindent 4 }}
+spec:
+  replicas: {{ .Values.cxdbMcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vafi.labels" . | nindent 8 }}
+        {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb-mcp") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cxdb-mcp
+          image: "{{ .Values.cxdbMcp.image.repository }}:{{ .Values.cxdbMcp.image.tag }}"
+          imagePullPolicy: {{ .Values.cxdbMcp.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.cxdbMcp.service.port }}
+              name: mcp
+          env:
+            - name: CXDB_URL
+              value: "http://{{ include "vafi.cxdbName" . }}:80"
+            {{- if .Values.cxdb.publicUrl }}
+            - name: CXDB_PUBLIC_URL
+              value: {{ .Values.cxdb.publicUrl | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.cxdbMcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vafi.fullname" . }}-cxdb-mcp
+  labels:
+    {{- include "vafi.labels" . | nindent 4 }}
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb-mcp") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.cxdbMcp.service.port }}
+      targetPort: {{ .Values.cxdbMcp.service.port }}
+      protocol: TCP
+      name: mcp
+  selector:
+    {{- include "vafi.selectorLabels" (dict "root" . "component" "cxdb-mcp") | nindent 4 }}
+{{- end }}

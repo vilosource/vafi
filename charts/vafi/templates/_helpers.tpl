@@ -63,6 +63,22 @@ CXDB service name.
 {{- end }}
 
 {{/*
+Bridge agent-pi image string. Accepts either the legacy single-string form
+("repo:tag") or the preferred {repository, tag} map form. The map form is
+required for build pipelines that bump tags in isolation (e.g. git-tag-bump
+in the vafi build Workflow); the legacy form remains supported so existing
+values files keep working.
+*/}}
+{{- define "vafi.bridgeAgentPiImage" -}}
+{{- $img := .Values.bridge.agentPiImage -}}
+{{- if kindIs "map" $img -}}
+{{- printf "%s:%s" $img.repository $img.tag -}}
+{{- else -}}
+{{- $img -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Common environment variables for the executor container.
 */}}
 {{- define "vafi.executorEnv" -}}

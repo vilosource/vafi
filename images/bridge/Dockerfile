@@ -1,5 +1,6 @@
 ARG REGISTRY=vafi
-FROM ${REGISTRY}/vafi-pi:latest
+ARG PI_TAG=latest
+FROM ${REGISTRY}/vafi-pi:${PI_TAG}
 
 USER root
 

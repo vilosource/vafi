@@ -150,7 +150,12 @@ bridge:
     repository: harbor.viloforge.com/vafi/vafi-bridge
     tag: latest
     pullPolicy: Always
-  # Image used for locked agent pods (architect/web_designer) spawned by the bridge
+  # Image used for locked agent pods (architect/web_designer) spawned by the
+  # bridge. Accepts either:
+  #   - legacy string:    "harbor.viloforge.com/vafi/vafi-agent-pi:latest"
+  #   - map (preferred):  { repository: "...", tag: "..." }
+  # The map form is required if a build pipeline bumps the tag in isolation;
+  # the legacy form is still supported so existing values files keep working.
   agentPiImage: "harbor.viloforge.com/vafi/vafi-agent-pi:latest"
   # Phase 9: mount the same PVC the architect pods use, read-only, so the
   # bridge can serve GET /v1/sessions/history from Pi's JSONL files.
@@ -221,6 +226,28 @@ cxdb:
     initialDelaySeconds: 10
     periodSeconds: 30
     failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# cxdb-mcp — MCP server that exposes the cxdb store to agents.
+# Migrated from vilosource/vafi-deploy:cxdb-mcp/ in 2026-05; lifecycle now
+# tracks the vafi chart so versions can't drift.
+# ---------------------------------------------------------------------------
+cxdbMcp:
+  enabled: true
+  replicas: 1
+  image:
+    repository: harbor.viloforge.com/vafi/vafi-cxdb-mcp
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8090
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 # ---------------------------------------------------------------------------
 # Sessions — shared volume for per-task working directories
