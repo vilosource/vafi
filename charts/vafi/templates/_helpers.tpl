@@ -82,8 +82,10 @@ values files keep working.
 Common environment variables for the executor container.
 */}}
 {{- define "vafi.executorEnv" -}}
+{{- if .Values.executor.agentId }}
 - name: VF_AGENT_ID
   value: {{ .Values.executor.agentId | quote }}
+{{- end }}
 - name: VF_AGENT_ROLE
   value: {{ .Values.executor.role | quote }}
 - name: VF_AGENT_TAGS
@@ -134,8 +136,10 @@ harness-specific vars (VF_HARNESS, VF_PI_PROVIDER, VF_PI_MODEL).
 The pi binary reads ANTHROPIC_API_KEY (anthropic SDK), not ANTHROPIC_AUTH_TOKEN.
 */}}
 {{- define "vafi.executorPiEnv" -}}
+{{- if .Values.executorPi.agentId }}
 - name: VF_AGENT_ID
   value: {{ .Values.executorPi.agentId | quote }}
+{{- end }}
 - name: VF_AGENT_ROLE
   value: {{ .Values.executorPi.role | quote }}
 - name: VF_AGENT_TAGS
@@ -190,8 +194,10 @@ Environment variables for the judge container.
 Same structure as executor but reads from .Values.judge.
 */}}
 {{- define "vafi.judgeEnv" -}}
+{{- if .Values.judge.agentId }}
 - name: VF_AGENT_ID
   value: {{ .Values.judge.agentId | quote }}
+{{- end }}
 - name: VF_AGENT_ROLE
   value: {{ .Values.judge.role | quote }}
 - name: VF_AGENT_TAGS
