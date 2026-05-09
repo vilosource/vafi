@@ -101,6 +101,85 @@ class TestController:
         )
 
     @pytest.mark.asyncio
+    async def test_registration_default_name_disambiguates_by_tags(self, mock_work_source, sample_agent):
+        """Two deployments sharing a role but with different tag sets must
+        register with distinct names. Otherwise vtf upserts them as a single
+        agent and the executor / executor-pi separation collapses.
+        """
+        mock_work_source.register.return_value = sample_agent
+        mock_work_source.poll.return_value = None
+
+        # claude executor: role=executor, tags=[executor]
+        cfg_claude = AgentConfig(
+            agent_id="",  # no override -> default
+            agent_role="executor",
+            agent_tags=["executor"],
+            vtf_api_url="http://test-vtf:8000",
+            poll_interval=1,
+        )
+        controller_claude = Controller(mock_work_source, cfg_claude)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(controller_claude.run(), timeout=0.1)
+        claude_call = mock_work_source.register.call_args
+        mock_work_source.register.reset_mock()
+
+        # pi executor: same role, different tags
+        cfg_pi = AgentConfig(
+            agent_id="",
+            agent_role="executor",
+            agent_tags=["executor", "pi"],
+            vtf_api_url="http://test-vtf:8000",
+            poll_interval=1,
+        )
+        controller_pi = Controller(mock_work_source, cfg_pi)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(controller_pi.run(), timeout=0.1)
+        pi_call = mock_work_source.register.call_args
+
+        # Names must differ even though role is the same
+        assert claude_call.kwargs["name"] != pi_call.kwargs["name"]
+        assert claude_call.kwargs["name"] == "executor"
+        assert pi_call.kwargs["name"] == "executor-pi"
+
+    @pytest.mark.asyncio
+    async def test_registration_falls_back_to_role_when_tags_empty(self, mock_work_source, sample_agent):
+        """If tags are empty for some reason, fall back to role rather than
+        producing an empty name.
+        """
+        mock_work_source.register.return_value = sample_agent
+        mock_work_source.poll.return_value = None
+
+        cfg = AgentConfig(
+            agent_id="",
+            agent_role="judge",
+            agent_tags=[],
+            vtf_api_url="http://test-vtf:8000",
+            poll_interval=1,
+        )
+        controller = Controller(mock_work_source, cfg)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(controller.run(), timeout=0.1)
+        assert mock_work_source.register.call_args.kwargs["name"] == "judge"
+
+    @pytest.mark.asyncio
+    async def test_registration_uses_explicit_agent_id_when_set(self, mock_work_source, sample_agent):
+        """VF_AGENT_ID override always wins over the tag/role default."""
+        mock_work_source.register.return_value = sample_agent
+        mock_work_source.poll.return_value = None
+
+        cfg = AgentConfig(
+            agent_id="vafi-executor-prod-1",
+            agent_role="executor",
+            agent_tags=["executor", "pi"],  # would be "executor-pi" by default
+            vtf_api_url="http://test-vtf:8000",
+            poll_interval=1,
+        )
+        controller = Controller(mock_work_source, cfg)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(controller.run(), timeout=0.1)
+        assert mock_work_source.register.call_args.kwargs["name"] == "vafi-executor-prod-1"
+
+    @pytest.mark.asyncio
     async def test_poll_no_work_available(self, mock_work_source, test_config, sample_agent):
         """Test polling when no work is available."""
         # Setup mocks

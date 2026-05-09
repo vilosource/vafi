@@ -64,8 +64,22 @@ class Controller:
         try:
             # Register with work source
             logger.info("Registering agent with work source...")
+            # vtf upserts agents by `name`. Default-naming purely by role
+            # (e.g. `executor-default`) produces collisions across
+            # deployments that share a role but differ in capability tags
+            # (e.g. claude-only `executor` vs pi `executor,pi` — both end
+            # up as a single vtf agent with the last-writer's tags).
+            # Derive the default from the sorted tag set when available so
+            # distinct capability profiles get distinct identities; fall
+            # back to role only if tags are empty. Operators can still
+            # pin an explicit identity via VF_AGENT_ID.
+            default_name = (
+                "-".join(sorted(self.config.agent_tags))
+                if self.config.agent_tags
+                else self.config.agent_role
+            )
             self._agent_info = await self.work_source.register(
-                name=self.config.agent_id or f"{self.config.agent_role}-default",
+                name=self.config.agent_id or default_name,
                 tags=self.config.agent_tags
             )
             logger.info(f"Registered as agent {self._agent_info.id}")
