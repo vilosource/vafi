@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+# git + ca-certificates: required for pip to resolve the vtf-sdk-python
+# git+https URL declared in pyproject.toml.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install the cxdb and cxdb_mcp packages
