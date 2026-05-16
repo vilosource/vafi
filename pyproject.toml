@@ -25,7 +25,7 @@ mcp = [
 # imports it via try/except → no-op. Install this extra AND set
 # VFOBS_EMIT_ENABLED=true to actually emit.
 observability = [
-    "vfobs-sdk-python @ git+https://github.com/ViloForge/vfobs.git@6a1895059209ae4142376ba791f754bb057b45b7#subdirectory=sdk/python",
+    "vfobs-sdk-python @ git+https://github.com/ViloForge/vfobs.git@05a7117b2758120b8a3bf42abc6fdabafb4647dc#subdirectory=sdk/python",
 ]
 
 [tool.setuptools.packages.find]

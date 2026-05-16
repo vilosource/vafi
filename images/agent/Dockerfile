@@ -12,9 +12,12 @@ COPY templates/ /opt/vf-agent/templates/
 # Copy project configuration
 COPY pyproject.toml /opt/vf-agent/
 
-# Install the controller as a Python package
+# Install the controller as a Python package, WITH the
+# observability extra so vfobs_sdk is present and emission.py
+# actually emits (without it the optional import silently yields a
+# NullEmitter — fail-safe, but no telemetry). WG5-min L4b.
 USER root
-RUN pip install --break-system-packages /opt/vf-agent/
+RUN pip install --break-system-packages '/opt/vf-agent/[observability]'
 USER agent
 
 # Copy agent scripts
