@@ -127,6 +127,17 @@ Common environment variables for the executor container.
     secretKeyRef:
       name: {{ include "vafi.secretName" . }}
       key: anthropic-base-url
+{{- if .Values.vfobs.emitEnabled }}
+- name: VFOBS_EMIT_ENABLED
+  value: "true"
+- name: VFOBS_EMIT_URL
+  value: {{ .Values.vfobs.emitUrl | quote }}
+- name: VFOBS_EMIT_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vafi.secretName" . }}
+      key: vfobs-ingest-token
+{{- end }}
 {{- end }}
 
 {{/*
@@ -187,6 +198,17 @@ The pi binary reads ANTHROPIC_API_KEY (anthropic SDK), not ANTHROPIC_AUTH_TOKEN.
     secretKeyRef:
       name: {{ include "vafi.secretName" . }}
       key: anthropic-base-url
+{{- if .Values.vfobs.emitEnabled }}
+- name: VFOBS_EMIT_ENABLED
+  value: "true"
+- name: VFOBS_EMIT_URL
+  value: {{ .Values.vfobs.emitUrl | quote }}
+- name: VFOBS_EMIT_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vafi.secretName" . }}
+      key: vfobs-ingest-token
+{{- end }}
 {{- end }}
 
 {{/*
@@ -237,4 +259,15 @@ Same structure as executor but reads from .Values.judge.
     secretKeyRef:
       name: {{ include "vafi.secretName" . }}
       key: anthropic-base-url
+{{- if .Values.vfobs.emitEnabled }}
+- name: VFOBS_EMIT_ENABLED
+  value: "true"
+- name: VFOBS_EMIT_URL
+  value: {{ .Values.vfobs.emitUrl | quote }}
+- name: VFOBS_EMIT_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vafi.secretName" . }}
+      key: vfobs-ingest-token
+{{- end }}
 {{- end }}

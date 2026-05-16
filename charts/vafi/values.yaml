@@ -211,6 +211,17 @@ vtf:
   mcpUrl: ""               # required for bridge — in-cluster vtf MCP URL (e.g. http://vtf-mcp.<ns>.svc.cluster.local:8002/mcp)
 
 # ---------------------------------------------------------------------------
+# vfobs observability emission (WG5-min). Default OFF — agents run
+# exactly as before unless explicitly enabled. When enabled the
+# controller emits task.* / harness.* events to vfobs (fire-and-
+# forget; never on the critical path). emitToken comes from the
+# vafi-secrets key `vfobs-ingest-token` (the vfobs WG1 ingest token).
+# ---------------------------------------------------------------------------
+vfobs:
+  emitEnabled: false
+  emitUrl: ""              # e.g. http://vfobs.vfobs-dev.svc.cluster.local:8080
+
+# ---------------------------------------------------------------------------
 # CXDB — execution trace store (disable if not using trace collection)
 # ---------------------------------------------------------------------------
 cxdb:
