@@ -40,6 +40,7 @@ These are authoritative and kept up-to-date.
 | [bridge/agent-bridge-IMPLEMENTATION-PLAN.md](bridge/agent-bridge-IMPLEMENTATION-PLAN.md) | Original 10-phase TDD implementation plan with acceptance criteria (historical). |
 | [vtf-vafi-fixes-PLAN.md](vtf-vafi-fixes-PLAN.md) | 2026-04-18 discovery fixes — MCP `requires` overload, `parse_bool("")` bug, hand-rolled pi executor + wrong liveness probe, `VF_MAX_REWORK` not enforced, supervisor gap. 5 fixes ranked, ~9 hr critical path. |
 | [bridge/agent-bridge-REWORK-PLAN.md](bridge/agent-bridge-REWORK-PLAN.md) | 18-item rework plan correcting implementation deviations (historical). |
+| [executor-judge-observability-FINDINGS.md](executor-judge-observability-FINDINGS.md) | 2026-05-16 live empirical campaign (3 canary experiments) characterizing executor/judge limitations: F4 proactive stuck-detection structurally inert, F7/F10 closed-system ghost-completion (no-gate + gate-but-no-delivery), F6 Pi task-delivery loss, F9 milestone-less invisibility. Mechanism + prioritized remediations. |
 
 ## Archived Documents
 
