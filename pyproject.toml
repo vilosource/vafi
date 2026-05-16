@@ -20,6 +20,13 @@ dev = [
 mcp = [
     "mcp[cli]>=1.20",
 ]
+# vfobs observability emission (WG5-min T1). OPTIONAL by design
+# (D-T1-impl-2): vafi installs + runs without it; emission.py
+# imports it via try/except → no-op. Install this extra AND set
+# VFOBS_EMIT_ENABLED=true to actually emit.
+observability = [
+    "vfobs-sdk-python @ git+https://github.com/ViloForge/vfobs.git@6a1895059209ae4142376ba791f754bb057b45b7#subdirectory=sdk/python",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

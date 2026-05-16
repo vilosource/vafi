@@ -8,7 +8,10 @@ Two separate heartbeat concerns:
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from .emission import safe_emit, workdir_signature
 
 if TYPE_CHECKING:
     from .worksources.protocol import WorkSource
@@ -48,22 +51,42 @@ async def agent_heartbeat_loop(
         raise
 
 
-async def heartbeat_loop(work_source: "WorkSource", task_id: str, interval_seconds: int) -> None:
+async def heartbeat_loop(
+    work_source: "WorkSource",
+    task_id: str,
+    interval_seconds: int,
+    *,
+    workgraph_id: str = "",
+    workdir: "Path | None" = None,
+    emitter=None,
+    source: str = "vafi-controller",
+) -> None:
     """Send periodic heartbeats for a claimed task.
 
     Runs as an asyncio task concurrently with harness execution. Calls
     work_source.heartbeat(task_id) every interval_seconds to extend the
     claim timeout in vtf.
 
+    The keyword-only args are OPTIONAL + defaulted (V16 discipline —
+    existing direct callers/tests are unaffected). When an emitter is
+    provided: each tick also emits a vfobs `task.heartbeat` (alive
+    signal) and, when the workdir signature changed since the prior
+    tick, `task.workdir_changed` (the progress signal — plan §D7).
+    Both are fail-safe: emission/sig errors never perturb the loop.
+
     Args:
         work_source: WorkSource implementation for heartbeat calls
         task_id: ID of the claimed task
         interval_seconds: Seconds between heartbeat calls
+        workgraph_id: vfobs dimension (empty ⇒ vfobs emits skipped)
+        workdir: task workdir for the change signature (optional)
+        emitter: vfobs Emitter (None ⇒ no vfobs emission)
+        source: event source string
 
     The coroutine runs until cancelled via asyncio.CancelledError.
-    Logs each heartbeat attempt and handles errors gracefully.
     """
     logger.info(f"Starting heartbeat loop for task {task_id} (interval={interval_seconds}s)")
+    _prev_sig: str | None = None
 
     try:
         while True:
@@ -76,6 +99,25 @@ async def heartbeat_loop(work_source: "WorkSource", task_id: str, interval_secon
                 # Log heartbeat errors but don't crash the loop
                 # The task execution should continue even if heartbeats fail
                 logger.warning(f"Heartbeat failed for task {task_id}: {e}")
+
+            # vfobs alive + progress signals (fail-safe; safe_emit
+            # swallows everything, workdir_signature returns None on
+            # any error → the loop is never perturbed).
+            if emitter is not None:
+                safe_emit(
+                    emitter, "task_heartbeat",
+                    workgraph_id=workgraph_id, task_id=task_id,
+                    source=source,
+                )
+                if workdir is not None:
+                    sig = workdir_signature(workdir)
+                    if sig is not None and sig != _prev_sig:
+                        _prev_sig = sig
+                        safe_emit(
+                            emitter, "task_workdir_changed",
+                            workgraph_id=workgraph_id, task_id=task_id,
+                            source=source, files_changed=0, commits=0,
+                        )
 
     except asyncio.CancelledError:
         logger.info(f"Heartbeat loop cancelled for task {task_id}")

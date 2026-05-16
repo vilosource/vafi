@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from .config import AgentConfig
 from .context import build_context, write_context
+from .emission import build_emitter, make_execution_summary, safe_emit
 from .gates import GateRunner
 from .heartbeat import agent_heartbeat_loop, heartbeat_loop
 from .invoker import HarnessInvoker
@@ -44,6 +45,10 @@ class Controller:
         self._agent_info = None
         self._invoker = HarnessInvoker(config)
         self._summarizer = None  # Set via set_summarizer() after construction
+        # vfobs emission — no-op unless the optional SDK is present
+        # AND emission is enabled+configured (degradable; never on
+        # the critical path). Constructed once, injected by DIP.
+        self._emitter = build_emitter(config)
 
     def set_summarizer(self, summarizer) -> None:
         """Inject an optional summarizer for execution trace summarization."""
@@ -134,6 +139,13 @@ class Controller:
                 except Exception as e:
                     logger.warning(f"Failed to mark agent offline: {e}")
 
+            # Flush any queued vfobs events (D9). Best-effort —
+            # aclose never raises on the no-op/real emitter.
+            try:
+                await self._emitter.aclose()
+            except Exception as e:
+                logger.debug(f"emitter aclose suppressed: {e}")
+
             logger.info("Shutting down controller")
 
     async def _poll_and_process(self) -> None:
@@ -164,6 +176,14 @@ class Controller:
             claimed_task = await self.work_source.claim(task.id, self._agent_info.id)
             logger.info(f"Claimed task {claimed_task.id}: {claimed_task.title}")
 
+            safe_emit(
+                self._emitter, "task_claimed",
+                workgraph_id=claimed_task.workgraph_id,
+                task_id=claimed_task.id,
+                source=f"vafi-controller/{self._agent_info.id}",
+                claimed_by_agent_id=self._agent_info.id,
+            )
+
             # Enforce VF_MAX_REWORK before invoking the harness (contract §13).
             # count_rework_attempts returns 0 on first-attempt tasks, so the
             # guard is inert outside rework. Failure to count is treated as 0
@@ -187,6 +207,21 @@ class Controller:
 
             # Execute the task
             result = await self.execute(claimed_task)
+
+            # Terminal state_changed (the gated final result — the
+            # single executor-scoped site that knows it; D8
+            # success→to_status mapping).
+            safe_emit(
+                self._emitter, "task_state_changed",
+                workgraph_id=claimed_task.workgraph_id,
+                task_id=claimed_task.id,
+                source=f"vafi-controller/{self._agent_info.id}",
+                from_status="doing",
+                to_status="done" if result.success else "failed",
+                execution_summary=make_execution_summary(
+                    result.num_turns, result.cost_usd
+                ),
+            )
 
             # Summarize execution trace from cxdb (best-effort, non-blocking)
             if self._summarizer:
@@ -321,15 +356,26 @@ class Controller:
         Returns:
             ExecutionResult with success status, execution details, and gate results
         """
-        # Start heartbeat coroutine before beginning execution
+        # workdir is deterministic from task id — compute it before
+        # the heartbeat loop so the loop can emit task.workdir_changed
+        # (the progress signal, plan §D7).
+        workdir = Path(self.config.sessions_dir) / f"task-{task.id}"
+
+        # Start heartbeat coroutine before beginning execution. New
+        # kw args are optional + defaulted so existing direct callers
+        # / tests of heartbeat_loop are unaffected (V16 discipline).
         heartbeat_task = asyncio.create_task(
-            heartbeat_loop(self.work_source, task.id, self.config.heartbeat_interval)
+            heartbeat_loop(
+                self.work_source, task.id, self.config.heartbeat_interval,
+                workgraph_id=getattr(task, "workgraph_id", ""),
+                workdir=workdir,
+                emitter=self._emitter,
+                source=f"vafi-controller/{getattr(self._agent_info, 'id', '?')}",
+            )
         )
         logger.debug(f"Started heartbeat task for task {task.id}")
 
         try:
-            # Create workdir based on task ID
-            workdir = Path(self.config.sessions_dir) / f"task-{task.id}"
             logger.info(f"Creating workdir for task {task.id}: {workdir}")
 
             # Get repo info from work source
@@ -347,8 +393,25 @@ class Controller:
             else:
                 prompt = f"Work on task {task.title} ({task.id}). Read .vafi/context.md for the full specification and history."
 
+            # COARSE phase markers bracketing the opaque harness
+            # subprocess (G4 — emitted here, NOT inside the pure
+            # invoker; G2 — these are NOT the progress signal, the
+            # harness yields no mid-run events).
+            _src = f"vafi-controller/{getattr(self._agent_info, 'id', '?')}"
+            safe_emit(
+                self._emitter, "harness_turn_started",
+                workgraph_id=getattr(task, "workgraph_id", ""),
+                task_id=task.id, source=_src,
+                turn_number=0, model=self.config.harness,
+            )
             # Invoke harness (clone is no-op since repo already cloned above)
             result = await self._invoker.invoke(task, repo_info, workdir, prompt)
+            safe_emit(
+                self._emitter, "harness_turn_completed",
+                workgraph_id=getattr(task, "workgraph_id", ""),
+                task_id=task.id, source=_src,
+                turn_number=result.num_turns,
+            )
 
             # If harness failed, return without running gates
             if not result.success:

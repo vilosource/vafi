@@ -33,6 +33,13 @@ class TaskInfo:
     test_command: dict[str, Any]
     needs_review: bool
     assigned_to: str | None
+    # vfobs observability dimension. Defaulted (NOT required) so the
+    # existing TaskInfo(...) constructions in vafi tests don't
+    # regress (verifier V16 / WG2 D-T0-1 lesson). vtaskforge has no
+    # "workgraph" — its unit is the milestone; the vtf worksource
+    # maps task.milestone.id here. Empty ⇒ emission hooks skip +
+    # log once (degrade, never crash).
+    workgraph_id: str = ""
 
 
 @dataclass
