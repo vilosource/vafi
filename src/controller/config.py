@@ -35,6 +35,13 @@ class AgentConfig:
 
     pod_name: str | None = None
 
+    # vfobs observability emission (WG5-min T1). Default OFF — the
+    # controller behaves exactly as today unless explicitly enabled
+    # AND configured. Turning it on is a config flip, no code change.
+    vfobs_emit_enabled: bool = False
+    vfobs_emit_url: str = ""
+    vfobs_emit_token: str = ""
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         tags_str = os.environ.get("VF_AGENT_TAGS", "executor")
@@ -58,6 +65,11 @@ class AgentConfig:
             cxdb_url=os.environ.get("VF_CXDB_URL", ""),
             cxdb_public_url=os.environ.get("VF_CXDB_PUBLIC_URL", ""),
             pod_name=os.environ.get("POD_NAME"),
+            vfobs_emit_enabled=os.environ.get(
+                "VFOBS_EMIT_ENABLED", ""
+            ).lower() in ("1", "true", "yes"),
+            vfobs_emit_url=os.environ.get("VFOBS_EMIT_URL", ""),
+            vfobs_emit_token=os.environ.get("VFOBS_EMIT_TOKEN", ""),
         )
 
     def display(self) -> str:

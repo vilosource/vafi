@@ -197,6 +197,10 @@ class VtfWorkSource:
     def _sdk_task_to_info(self, task: SdkTask) -> TaskInfo:
         """Convert SDK Task entity to internal TaskInfo."""
         project_id = task.project.id if task.project else ""
+        # vfobs "workgraph" == vtaskforge milestone (verified vs the
+        # vtf SDK Task entity — there is no workgraph in vtaskforge;
+        # the WG vtf-imports each create one milestone per workgraph).
+        workgraph_id = task.milestone.id if task.milestone else ""
         return TaskInfo(
             id=task.id,
             title=task.title,
@@ -205,4 +209,5 @@ class VtfWorkSource:
             test_command=task.test_command,
             needs_review=task.needs_review_on_completion or False,
             assigned_to=str(task.assigned_to) if task.assigned_to else None,
+            workgraph_id=workgraph_id,
         )
