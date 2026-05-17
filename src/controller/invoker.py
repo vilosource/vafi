@@ -101,6 +101,22 @@ class HarnessInvoker:
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.error(f"Failed to rewrite origin to SSH ({ssh_url}): {e}")
 
+    def _clone_url(self, url: str) -> str:
+        """Resolve the URL to clone from (#17 / architecture R1).
+
+        Clone and push must use the *same* managed credential. #15 made
+        push SSH; this makes clone SSH too, so private GitHub repos are
+        cloneable. Returns the `git@github.com:` form iff `url` is
+        GitHub-HTTPS AND the mounted SSH key is present; otherwise the
+        URL unchanged (V16: non-github / no-key / already-ssh paths and
+        public-repo behaviour unaffected). Reuses the #15 pure helper.
+        See docs/issue-17-clone-ssh-DESIGN.md.
+        """
+        ssh_url = https_github_to_ssh(url)
+        if ssh_url is not None and self.ssh_key_path.exists():
+            return ssh_url
+        return url
+
     async def invoke(
         self,
         task: TaskInfo,
@@ -190,7 +206,7 @@ class HarnessInvoker:
                 "--branch", repo.branch,
                 "--single-branch",
                 "--depth", "1",  # Shallow clone for efficiency
-                repo.url,
+                self._clone_url(repo.url),  # #17/R1: SSH cred for private repos
                 str(workdir)
             ]
 
