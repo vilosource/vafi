@@ -718,3 +718,82 @@ class TestNormalizeOriginForPush:
         inv.ssh_key_path = key
         inv._normalize_origin_for_push(wd, "https://gitlab.com/test/repo.git")
         assert _git(wd, "remote", "get-url", "origin") == "https://gitlab.com/test/repo.git"
+
+
+class TestCloneUrl:
+    """#17/R1: clone-URL resolver — clone via the managed SSH credential
+    when GitHub-HTTPS and the mounted key is present (else unchanged).
+    See docs/issue-17-clone-ssh-DESIGN.md."""
+
+    def _inv(self, test_config, key=None):
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = key if key is not None else Path("/nonexistent/key")
+        return inv
+
+    def test_github_https_with_key_becomes_ssh(self, tmp_path, test_config):
+        k = tmp_path / "id_ed25519"; k.write_text("x")
+        inv = self._inv(test_config, k)
+        assert inv._clone_url("https://github.com/o/r.git") == "git@github.com:o/r.git"
+
+    def test_github_https_without_key_unchanged(self, test_config):
+        inv = self._inv(test_config)  # key path missing
+        assert inv._clone_url("https://github.com/o/r.git") == "https://github.com/o/r.git"
+
+    def test_non_github_unchanged_even_with_key(self, tmp_path, test_config):
+        k = tmp_path / "id_ed25519"; k.write_text("x")
+        inv = self._inv(test_config, k)
+        assert inv._clone_url("https://gitlab.com/o/r.git") == "https://gitlab.com/o/r.git"
+
+    def test_already_ssh_unchanged(self, tmp_path, test_config):
+        k = tmp_path / "id_ed25519"; k.write_text("x")
+        inv = self._inv(test_config, k)
+        assert inv._clone_url("git@github.com:o/r.git") == "git@github.com:o/r.git"
+
+
+class TestCloneCommandUsesResolvedUrl:
+    """#17/R1: the actual `git clone` command must carry the SSH URL iff
+    GitHub-HTTPS AND key present; HTTPS/unchanged otherwise."""
+
+    def _clone_argv(self, mock_run):
+        for c in mock_run.call_args_list:
+            argv = c.args[0] if c.args else c.kwargs.get("args", [])
+            if isinstance(argv, list) and argv[:2] == ["git", "clone"]:
+                return argv
+        return None
+
+    @pytest.mark.asyncio
+    async def test_clone_uses_ssh_when_key_present(self, tmp_path, test_config):
+        inv = HarnessInvoker(test_config)
+        k = tmp_path / "id_ed25519"; k.write_text("x"); inv.ssh_key_path = k
+        repo = RepoInfo(url="https://github.com/o/r.git", branch="main")
+        wd = tmp_path / "wd"
+        with patch("controller.invoker.subprocess.run") as mr:
+            mr.return_value = Mock(returncode=0, stderr="", stdout="")
+            await inv._ensure_repo_cloned(repo, wd)
+        argv = self._clone_argv(mr)
+        assert argv is not None and "git@github.com:o/r.git" in argv
+        assert "https://github.com/o/r.git" not in argv
+
+    @pytest.mark.asyncio
+    async def test_clone_uses_https_when_no_key(self, tmp_path, test_config):
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = tmp_path / "missing"
+        repo = RepoInfo(url="https://github.com/o/r.git", branch="main")
+        wd = tmp_path / "wd"
+        with patch("controller.invoker.subprocess.run") as mr:
+            mr.return_value = Mock(returncode=0, stderr="", stdout="")
+            await inv._ensure_repo_cloned(repo, wd)
+        argv = self._clone_argv(mr)
+        assert argv is not None and "https://github.com/o/r.git" in argv
+
+    @pytest.mark.asyncio
+    async def test_clone_non_github_unchanged(self, tmp_path, test_config):
+        inv = HarnessInvoker(test_config)
+        k = tmp_path / "id_ed25519"; k.write_text("x"); inv.ssh_key_path = k
+        repo = RepoInfo(url="https://gitlab.com/o/r.git", branch="main")
+        wd = tmp_path / "wd"
+        with patch("controller.invoker.subprocess.run") as mr:
+            mr.return_value = Mock(returncode=0, stderr="", stdout="")
+            await inv._ensure_repo_cloned(repo, wd)
+        argv = self._clone_argv(mr)
+        assert argv is not None and "https://gitlab.com/o/r.git" in argv
