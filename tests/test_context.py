@@ -17,6 +17,20 @@ class TestBuildContext:
         result = build_context(task_data, notes=[], reviews=[])
         assert "pytest -v" in result
 
+    def test_executor_gets_deliverable_branch_contract(self):
+        """F7/F10 producer side: the executor must be told the deterministic
+        branch the delivery gate checks (docs/f7-f10-delivery-gate-DESIGN.md)."""
+        task_data = {"id": "t1", "title": "T", "spec": "", "test_command": {}}
+        result = build_context(task_data, notes=[], reviews=[], role="executor")
+        assert "vafi/task-t1" in result
+        assert "push" in result.lower()
+
+    def test_judge_not_given_deliverable_branch_instruction(self):
+        """The branch-push contract is an executor instruction, not a judge one."""
+        task_data = {"id": "t1", "title": "T", "spec": "", "test_command": {}}
+        result = build_context(task_data, notes=[], reviews=[], role="judge")
+        assert "vafi/task-t1" not in result
+
     def test_no_history_when_empty(self):
         task_data = {"id": "t1", "title": "T", "spec": "", "test_command": {}}
         result = build_context(task_data, notes=[], reviews=[])

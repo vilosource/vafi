@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch, Mock
 
 from controller.gates import GateRunner, GateConfig
-from controller.types import TaskInfo, GateResult
+from controller.types import TaskInfo, GateResult, RepoInfo
 
 
 @pytest.fixture
@@ -297,3 +297,50 @@ class TestFromTaskCommand:
         assert len(runner.gates) == 1
         gate = runner.gates[0]
         assert gate.command == "cd /home/user/project && source .venv/bin/activate && pytest tests/ -v"
+
+class TestFromTask:
+    """F7/F10: GateRunner.from_task always synthesizes a required delivery
+    gate (against origin) so a no-test_command task is no longer a vacuous
+    pass and an ephemeral-workdir-only commit no longer satisfies success.
+    See docs/f7-f10-delivery-gate-DESIGN.md.
+    """
+
+    repo = RepoInfo(url="https://github.com/o/r.git", branch="main")
+
+    def _task(self, test_command):
+        return TaskInfo(
+            id="abc123",
+            title="t",
+            spec="s",
+            project_id="p",
+            test_command=test_command,
+            needs_review=False,
+            assigned_to=None,
+        )
+
+    def test_delivery_gate_present_when_no_test_command(self):
+        runner = GateRunner.from_task(self._task(None), self.repo)
+        assert len(runner.gates) == 1
+        g = runner.gates[0]
+        assert g.name == "deliverable-pushed"
+        assert g.required is True
+        # references the deterministic deliverable branch + base branch
+        assert "vafi/task-abc123" in g.command
+        assert "ls-remote" in g.command
+        assert "main" in g.command
+
+    def test_delivery_gate_present_when_empty_test_command(self):
+        runner = GateRunner.from_task(self._task({}), self.repo)
+        assert [g.name for g in runner.gates] == ["deliverable-pushed"]
+
+    def test_test_command_gate_appended_after_delivery(self):
+        runner = GateRunner.from_task(self._task({"command": "pytest -q"}), self.repo)
+        assert [g.name for g in runner.gates] == ["deliverable-pushed", "task-test"]
+        assert runner.gates[1].command == "pytest -q"
+        assert runner.gates[1].required is True
+
+    def test_from_task_command_shim_unchanged_v16(self):
+        # V16: the old classmethod keeps its old (no-delivery) semantics so
+        # existing direct callers/tests do not regress.
+        assert len(GateRunner.from_task_command({}).gates) == 0
+        assert len(GateRunner.from_task_command(None).gates) == 0

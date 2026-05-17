@@ -41,6 +41,7 @@ These are authoritative and kept up-to-date.
 | [vtf-vafi-fixes-PLAN.md](vtf-vafi-fixes-PLAN.md) | 2026-04-18 discovery fixes — MCP `requires` overload, `parse_bool("")` bug, hand-rolled pi executor + wrong liveness probe, `VF_MAX_REWORK` not enforced, supervisor gap. 5 fixes ranked, ~9 hr critical path. |
 | [bridge/agent-bridge-REWORK-PLAN.md](bridge/agent-bridge-REWORK-PLAN.md) | 18-item rework plan correcting implementation deviations (historical). |
 | [executor-judge-observability-FINDINGS.md](executor-judge-observability-FINDINGS.md) | 2026-05-16 live empirical campaign (3 canary experiments) characterizing executor/judge limitations: F4 proactive stuck-detection structurally inert, F7/F10 closed-system ghost-completion (no-gate + gate-but-no-delivery), F6 Pi task-delivery loss, F9 milestone-less invisibility. Mechanism + prioritized remediations. |
+| [f7-f10-delivery-gate-DESIGN.md](f7-f10-delivery-gate-DESIGN.md) | Fix for F7/F10 (#8/#9): always-required synthesized delivery gate (origin has `vafi/task-<id>` ahead of base) reusing the GateRunner seam; kills the vacuous no-gate pass and the ephemeral-workdir ghost. Convention-branch (Option 1); forward-compatible with forge-PR / vtf-contract gates. |
 
 ## Archived Documents
 

@@ -11,9 +11,40 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .types import TaskInfo, GateResult
+from .types import TaskInfo, RepoInfo, GateResult
 
 logger = logging.getLogger(__name__)
+
+
+def deliverable_branch(task_id: str) -> str:
+    """The deterministic branch the executor must push and the delivery gate
+    verifies on origin. Single source of truth for the F7/F10 convention
+    (docs/f7-f10-delivery-gate-DESIGN.md) — also consumed by the context
+    builder so producer and verifier sides cannot drift.
+    """
+    return f"vafi/task-{task_id}"
+
+
+def _delivery_gate_command(task_id: str, base_branch: str) -> str:
+    """Shell command asserting the deliverable was *durably pushed* to origin:
+    a branch ``vafi/task-<id>`` exists on origin and carries commits the base
+    branch does not (tip SHA differs). Uses ``git ls-remote`` so it queries
+    the remote directly — unaffected by the shallow/detached pod clone, and
+    NOT satisfiable by a workdir-only local commit (closes F10). Always
+    present, so a no-``test_command`` task is no longer a vacuous pass (F7).
+    """
+    branch = deliverable_branch(task_id)
+    return (
+        "set -e; "
+        f"remote_sha=$(git ls-remote --heads origin '{branch}' | cut -f1); "
+        '[ -n "$remote_sha" ] || { echo "deliverable branch '
+        f"'{branch}' not found on origin (nothing pushed)\"; exit 1; }}; "
+        f"base_sha=$(git ls-remote --heads origin '{base_branch}' | cut -f1); "
+        '[ "$remote_sha" != "$base_sha" ] || { echo "deliverable branch '
+        f"'{branch}' is identical to base '{base_branch}' "
+        '(no new commits pushed)"; exit 1; }; '
+        f"echo \"deliverable verified on origin: {branch} @ $remote_sha\""
+    )
 
 
 @dataclass
@@ -152,4 +183,28 @@ class GateRunner:
             gates.append(gate)
             logger.debug(f"Created gate from test_command: {gate.command}")
 
+        return cls(gates)
+
+    @classmethod
+    def from_task(cls, task: TaskInfo, repo_info: RepoInfo) -> "GateRunner":
+        """Create a GateRunner for a task: an always-present, required
+        delivery gate (verifies the deliverable was durably pushed to
+        origin) followed by the optional ``test_command`` gate.
+
+        This is the F7/F10 fix seam. We do NOT special-case the controller's
+        success computation; the delivery requirement is just another
+        required gate, so the existing exit-code machinery is reused
+        unchanged (Open/Closed). ``from_task_command`` is kept verbatim for
+        existing direct callers/tests (V16).
+        """
+        gates = [
+            GateConfig(
+                name="deliverable-pushed",
+                command=_delivery_gate_command(task.id, repo_info.branch),
+                required=True,
+            )
+        ]
+        # Reuse the existing optional test_command gate, ordered AFTER the
+        # delivery gate (delivery is the floor; test_command refines it).
+        gates.extend(cls.from_task_command(task.test_command).gates)
         return cls(gates)

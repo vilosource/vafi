@@ -9,6 +9,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .gates import deliverable_branch
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,6 +134,19 @@ def build_context(
             lines.append("Do not reimplement from scratch — build on the existing code.")
         else:
             lines.append("Implement the task according to the specification above.")
+        lines.append("")
+        branch = deliverable_branch(task_id)
+        lines.append("## Deliverable contract (enforced)")
+        lines.append("")
+        lines.append(
+            f"Your work is only accepted if you **push** a branch named "
+            f"`{branch}` to the `origin` remote with the commits that "
+            f"implement this task (ahead of the base branch). This is "
+            f"machine-verified against origin after you exit — a local "
+            f"commit that is never pushed counts as **no delivery** and the "
+            f"task will fail. If you cannot push, report the failure "
+            f"honestly (do not claim success)."
+        )
     lines.append("")
 
     return "\n".join(lines)
