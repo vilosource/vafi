@@ -420,7 +420,12 @@ class Controller:
 
             # Harness succeeded - run gates
             logger.info(f"Harness succeeded for task {task.id}, running gates")
-            gate_runner = GateRunner.from_task_command(task.test_command)
+            # F7/F10: always synthesize a required delivery gate (verifies
+            # the deliverable was durably pushed to origin) + the optional
+            # test_command gate. A no-test_command task is no longer a
+            # vacuous pass, and an ephemeral-workdir-only commit no longer
+            # satisfies success. See docs/f7-f10-delivery-gate-DESIGN.md.
+            gate_runner = GateRunner.from_task(task, repo_info)
             gate_results = await gate_runner.run_gates(workdir, task)
 
             # Determine overall success based on gate results
