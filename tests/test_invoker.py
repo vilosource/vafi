@@ -641,3 +641,80 @@ class TestHarnessInvoker:
             # max-turns must appear after the -- separator
             assert max_turns_idx > separator_idx
             assert harness_args[max_turns_idx + 1] == "25"
+
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=str(cwd), check=True,
+                           capture_output=True, text=True).stdout.strip()
+
+
+class TestHttpsGithubToSsh:
+    """#15: pure HTTPS→SSH GitHub URL transform. See
+    docs/issue-15-https-ssh-remote-DESIGN.md."""
+
+    def test_https_with_dotgit(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("https://github.com/test/repo.git") == "git@github.com:test/repo.git"
+
+    def test_https_without_dotgit(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("https://github.com/test/repo") == "git@github.com:test/repo.git"
+
+    def test_https_trailing_slash(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("https://github.com/vilosource/vtf-canary/") == "git@github.com:vilosource/vtf-canary.git"
+
+    def test_already_ssh_scp_form_is_none(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("git@github.com:test/repo.git") is None
+
+    def test_ssh_scheme_is_none(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("ssh://git@github.com/test/repo.git") is None
+
+    def test_non_github_host_is_none(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("https://gitlab.com/test/repo.git") is None
+
+    def test_incomplete_path_is_none(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("https://github.com/onlyowner") is None
+
+    def test_garbage_is_none(self):
+        from controller.invoker import https_github_to_ssh
+        assert https_github_to_ssh("") is None
+        assert https_github_to_ssh("not a url") is None
+
+
+class TestNormalizeOriginForPush:
+    """#15: integration — origin is rewritten to SSH iff a GitHub https
+    URL AND the mounted ssh key is present; otherwise untouched."""
+
+    def _repo_with_origin(self, tmp_path, url):
+        wd = tmp_path / "wd"
+        wd.mkdir()
+        _git(wd, "init", "-q", ".")
+        _git(wd, "remote", "add", "origin", url)
+        return wd
+
+    def test_rewrites_when_key_present(self, tmp_path, test_config):
+        wd = self._repo_with_origin(tmp_path, "https://github.com/test/repo.git")
+        key = tmp_path / "id_ed25519"; key.write_text("x")
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = key
+        inv._normalize_origin_for_push(wd, "https://github.com/test/repo.git")
+        assert _git(wd, "remote", "get-url", "origin") == "git@github.com:test/repo.git"
+
+    def test_unchanged_when_key_absent(self, tmp_path, test_config):
+        wd = self._repo_with_origin(tmp_path, "https://github.com/test/repo.git")
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = tmp_path / "missing"
+        inv._normalize_origin_for_push(wd, "https://github.com/test/repo.git")
+        assert _git(wd, "remote", "get-url", "origin") == "https://github.com/test/repo.git"
+
+    def test_non_github_unchanged_even_with_key(self, tmp_path, test_config):
+        wd = self._repo_with_origin(tmp_path, "https://gitlab.com/test/repo.git")
+        key = tmp_path / "id_ed25519"; key.write_text("x")
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = key
+        inv._normalize_origin_for_push(wd, "https://gitlab.com/test/repo.git")
+        assert _git(wd, "remote", "get-url", "origin") == "https://gitlab.com/test/repo.git"

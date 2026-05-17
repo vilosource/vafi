@@ -13,6 +13,7 @@ rather than Docker API calls.
 import asyncio
 import json
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,34 @@ from .config import AgentConfig
 from .types import TaskInfo, RepoInfo, ExecutionResult
 
 logger = logging.getLogger(__name__)
+
+# Issue #15: agent pods carry an SSH push credential but vtf project
+# repo_url is HTTPS, so `origin` is unpushable with that credential.
+# The controller rewrites the GitHub `origin` to the SSH form
+# deterministically rather than relying on the agent to do it (the same
+# stance as the F7/F10 delivery gate). GitHub-only by design: the
+# mounted key is GitHub-scoped; other hosts are intentionally left as-is.
+# See docs/issue-15-https-ssh-remote-DESIGN.md.
+_GITHUB_HTTPS_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
+)
+
+
+def https_github_to_ssh(url: str) -> str | None:
+    """Map an HTTPS GitHub clone URL to its scp-form SSH equivalent.
+
+    `https://github.com/<owner>/<repo>[.git][/]` ->
+    `git@github.com:<owner>/<repo>.git`. Returns None for anything that
+    is not an HTTPS GitHub repo URL (already SSH, ssh:// scheme,
+    non-github host, incomplete path, garbage) — caller treats None as
+    "leave origin untouched". Pure; no I/O.
+    """
+    if not url:
+        return None
+    m = _GITHUB_HTTPS_RE.match(url.strip())
+    if not m:
+        return None
+    return f"git@github.com:{m['owner']}/{m['repo']}.git"
 
 
 class HarnessInvoker:
@@ -38,6 +67,39 @@ class HarnessInvoker:
             config: Agent configuration containing timeouts and limits
         """
         self.config = config
+        # Issue #15: where the chart's setup-ssh initContainer lands the
+        # mounted key. Injectable so tests can point it at a tmp file.
+        self.ssh_key_path = Path.home() / ".ssh" / "id_ed25519"
+
+    def _normalize_origin_for_push(self, workdir: Path, url: str) -> None:
+        """Make `origin` pushable with the mounted SSH credential (#15).
+
+        If `url` is an HTTPS GitHub URL AND the SSH key is present, rewrite
+        `origin` to the `git@github.com:` form so a well-behaved agent's
+        `git push` (and the delivery gate) succeed without the agent
+        having to rewrite the remote itself. Idempotent and non-fatal:
+        any failure is logged loudly but does not abort the clone — the
+        delivery gate remains the backstop (a bad remote => push fails =>
+        gate fails => honest task failure, never a silent ghost).
+        """
+        ssh_url = https_github_to_ssh(url)
+        if ssh_url is None:
+            logger.debug(f"origin {url!r} is not an HTTPS GitHub URL; leaving as-is")
+            return
+        if not self.ssh_key_path.exists():
+            logger.warning(
+                f"origin is HTTPS GitHub but no SSH key at {self.ssh_key_path}; "
+                f"leaving origin HTTPS (push will not authenticate)"
+            )
+            return
+        try:
+            subprocess.run(
+                ["git", "-C", str(workdir), "remote", "set-url", "origin", ssh_url],
+                capture_output=True, text=True, timeout=15, check=True,
+            )
+            logger.info(f"Rewrote origin -> {ssh_url} for SSH push (#15)")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.error(f"Failed to rewrite origin to SSH ({ssh_url}): {e}")
 
     async def invoke(
         self,
@@ -111,6 +173,9 @@ class HarnessInvoker:
         """
         if workdir.exists() and (workdir / ".git").exists():
             logger.debug(f"Repository already cloned in {workdir}")
+            # Idempotent: rework reuses a persisted workdir — re-assert
+            # the SSH origin so a resumed attempt can still push (#15).
+            self._normalize_origin_for_push(workdir, repo.url)
             return
 
         logger.info(f"Cloning repository {repo.url} branch {repo.branch} to {workdir}")
@@ -139,6 +204,10 @@ class HarnessInvoker:
             )
 
             logger.debug(f"Repository cloned successfully: {result.returncode}")
+
+            # #15: HTTPS clone leaves origin unpushable with the mounted
+            # SSH-only credential — rewrite it deterministically.
+            self._normalize_origin_for_push(workdir, repo.url)
 
         except subprocess.CalledProcessError as e:
             logger.error(f"Git clone failed: {e.stderr}")
