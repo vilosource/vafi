@@ -207,3 +207,67 @@ class TestPollAndIntegrate:
         c._agent_info = type("A", (), {"id": "a"})()
         await c._poll_and_integrate()
         ws.report_integration_result.assert_not_awaited()
+
+    def _ctrl(self, ws):
+        from controller import controller as ctrl_mod
+        from controller.config import AgentConfig
+        c = ctrl_mod.Controller(
+            work_source=ws,
+            config=AgentConfig(agent_id="a", agent_role="executor",
+                               harness="claude", agent_tags=[]),
+        )
+        c._agent_info = type("A", (), {"id": "a"})()
+        return c
+
+    def _ws_github(self):
+        from tests.test_controller import MockWorkSource
+        ws = MockWorkSource()
+        task = TaskInfo(id="T9", title="t", spec="", project_id="p",
+                        test_command={}, needs_review=False,
+                        assigned_to=None, base_ref="vafi/wg-ms1")
+        ws.list_integrations = AsyncMock(return_value=[task])
+        ws.get_task_repo_info = AsyncMock(
+            return_value=RepoInfo(url="https://github.com/o/r.git",
+                                  branch="vafi/wg-ms1"))
+        ws.get_repo_info = AsyncMock(
+            return_value=RepoInfo(url="https://github.com/o/r.git",
+                                  branch="main"))
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_integrate_clones_via_ssh_resolved_url(
+            self, monkeypatch, tmp_path):
+        """WC-1.2: the integration path must clone/push via the same
+        #17 SSH credential as the executor path; otherwise `git push`
+        of the integration branch fails with 'could not read Username
+        for https://github.com' (the WC-3 n1 failure)."""
+        from controller import controller as ctrl_mod
+        captured = {}
+
+        def fake_integrate(url, ib, bb, tb, wd):
+            captured["url"] = url
+            return IntegrationOutcome(True, "ok")
+
+        monkeypatch.setattr(ctrl_mod, "integrate", fake_integrate)
+        c = self._ctrl(self._ws_github())
+        key = tmp_path / "id_ed25519"
+        key.write_text("x")
+        c._invoker.ssh_key_path = key
+        await c._poll_and_integrate()
+        assert captured["url"] == "git@github.com:o/r.git"
+
+    @pytest.mark.asyncio
+    async def test_integrate_url_passthrough_without_key(
+            self, monkeypatch, tmp_path):
+        from controller import controller as ctrl_mod
+        captured = {}
+
+        def fake_integrate(url, ib, bb, tb, wd):
+            captured["url"] = url
+            return IntegrationOutcome(True, "ok")
+
+        monkeypatch.setattr(ctrl_mod, "integrate", fake_integrate)
+        c = self._ctrl(self._ws_github())
+        c._invoker.ssh_key_path = tmp_path / "missing"
+        await c._poll_and_integrate()
+        assert captured["url"] == "https://github.com/o/r.git"
