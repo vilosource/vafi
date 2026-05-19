@@ -288,7 +288,13 @@ class Controller:
                 workdir = Path(tmp) / "repo"
                 outcome = await asyncio.to_thread(
                     integrate,
-                    repo.url,
+                    # WC-1.2: clone/push via the same #17 SSH credential
+                    # as the executor path — integrate() pushes the
+                    # integration branch, so an unauthenticated HTTPS
+                    # origin fails ("could not read Username for
+                    # https://github.com"). No-op when no key / non-
+                    # GitHub (V16 byte-identical).
+                    self._invoker._clone_url(repo.url),
                     repo.branch,            # integration branch (= base_ref)
                     proj.branch,            # project default (branch creation)
                     task_branch,
