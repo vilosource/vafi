@@ -130,9 +130,38 @@ class VtfWorkSource:
         await self._client.tasks.add_note(task_id, text=text)
 
     async def get_repo_info(self, project_id: str) -> RepoInfo:
-        """Get repository information for a project."""
+        """Get repository information for a project (project-default
+        branch). Retained for the single-task / no-base_ref path."""
         project = await self._client.projects.get(project_id)
         return RepoInfo(url=project.repo_url, branch=project.default_branch or "main")
+
+    async def get_task_repo_info(self, task: TaskInfo) -> RepoInfo:
+        """WC-2/D1 — per-task clone ref. The controller clones the
+        server-derived `base_ref` (WC-1/C2: the milestone integration
+        branch for a workgraph task) and never re-derives the rule.
+        Empty base_ref ⇒ project default (V16 byte-identical)."""
+        project = await self._client.projects.get(task.project_id)
+        branch = task.base_ref or project.default_branch or "main"
+        return RepoInfo(url=project.repo_url, branch=branch)
+
+    async def list_integrations(self) -> list[TaskInfo]:
+        """WC-2/D2 — workgraph tasks awaiting post-approve integration.
+        WC-1 routes an approved workgraph task to `integrating` (the
+        milestone merge slot is held SoR-side); the controller services
+        them like any other state in its poll loop."""
+        result = await self._client.tasks.list(status="integrating")
+        return [self._sdk_task_to_info(t) for t in result.items]
+
+    async def report_integration_result(
+        self, task_id: str, success: bool, detail: str = ""
+    ) -> None:
+        """WC-2/D2 — report the merge outcome. success ⇒
+        integrating→done; conflict/push-failure ⇒
+        integrating→needs_attention (+ a note carrying `detail`).
+        Idempotent SoR-side (re-entrant with the WC-1/C4 reaper)."""
+        await self._client.tasks.integration_result(
+            task_id, success=success, detail=detail,
+        )
 
     async def get_rework_context(self, task_id: str) -> ReworkContext:
         """Get context for rework execution."""
@@ -210,4 +239,5 @@ class VtfWorkSource:
             needs_review=task.needs_review_on_completion or False,
             assigned_to=str(task.assigned_to) if task.assigned_to else None,
             workgraph_id=workgraph_id,
+            base_ref=getattr(task, "base_ref", "") or "",
         )
