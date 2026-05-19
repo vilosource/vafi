@@ -34,6 +34,15 @@ composition; conflict → fail-loud → bounded rework; no silent stall.
   the task sits in `integrating` carrying `base_ref` (= the milestone
   integration branch) on the v2 task API.
 - `RepoInfo` (`controller/types.py:20`) = `{url, branch}`.
+- **Branch model (verified, `gates.py:19`/`docs/f7-f10-delivery-gate-DESIGN.md`):**
+  the executor pushes its deliverable to the deterministic branch
+  `gates.deliverable_branch(task_id)` = **`vafi/task-<task_id>`** on
+  origin; the F7/F10 delivery gate asserts (via `git ls-remote`) that
+  this branch exists and its tip SHA ≠ the base branch
+  (`repo_info.branch`) tip. After D1, base = `task.base_ref` =
+  `milestone.integration_branch` for workgraph tasks. So the merge-queue
+  delta to integrate is unambiguous: origin `vafi/task-<task_id>` →
+  `integration_branch`. No new branch-naming contract is invented.
 
 ## Contract (the three changes WC-2 adds)
 
@@ -54,8 +63,9 @@ poll loop (symmetric with todo/review). For a task in `integrating`:
 1. Ensure the integration branch exists: create/locate
    `task.base_ref` off `project.default_branch` (idempotent — the
    R0 split: SoR owns the *name*, controller owns the git ref).
-2. `git merge --no-ff` the task's delivered work branch into the
-   integration branch; push.
+2. Fetch origin `vafi/task-<task_id>` (= `gates.deliverable_branch`,
+   the verified deliverable ref) and `git merge --no-ff` it into the
+   integration branch; push the integration branch.
 3. **Success** → report SoR `integrating → done` (clears the slot;
    next milestone task can take it).
    **Conflict / push failure** → `git merge --abort`, report SoR
@@ -73,6 +83,36 @@ records the integration outcome (sha, conflicting files) as task
 notes, so the SoR `integration_expired` / `needs_attention` path
 carries actionable context. No new SoR fields (WC-1 closed the
 silent non-terminal).
+
+## SEAM (discovered design-first, 2026-05-19) — the reporting API
+
+WC-1/C3 specified "controller reports success⇒`integrating→done`,
+conflict⇒`integrating→needs_attention`" but did **not** expose a
+controller-facing endpoint for it (correctly — no consumer existed at
+WC-1 time). Verified against merged WC-1: `tasks/views.py:302
+complete()` routes to `pending_completion_review`/`done` by
+`needs_review_on_completion` — from `integrating`,
+`pending_completion_review` is an **invalid** transition (WC-1 edges =
+`{done, needs_attention, cancelled, deferred}`), so `complete()` is
+unsafe to reuse; `fail()` is transition-valid but doing-scoped.
+
+**Resolution (companion SoR change — vtaskforge, same per-merge gate):**
+add a dedicated controller-facing action
+`POST /v2/tasks/{id}/integration-result/` with body
+`{success: bool, detail: str}`:
+- `success=true`  → `perform_transition(integrating → done)`
+  (I4 guard already permits this — recorded successful integration).
+- `success=false` → `perform_transition(integrating → needs_attention)`
+  + a note carrying `detail` (conflicting paths / push error).
+Idempotent: if the task is already terminal/`needs_attention` from a
+prior report or the C4 reaper, the call is a no-op (report the
+existing state, don't error) — re-entrant with the WC-1/C4 reaper.
+SDK gets a matching `tasks.integration_result(id, success, detail)`.
+
+This is a small vtaskforge slice (one DRF action + state-machine-bounded
+transition + SDK method + tests) — the symmetric counterpart to
+`take_merge_slot`, completing WC-1/C3's "controller report" half now
+that WC-2 is its consumer.
 
 ## Forks (light ratification, R2-style)
 
