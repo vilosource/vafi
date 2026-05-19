@@ -133,16 +133,29 @@ class VtfWorkSource:
         """Get repository information for a project (project-default
         branch). Retained for the single-task / no-base_ref path."""
         project = await self._client.projects.get(project_id)
-        return RepoInfo(url=project.repo_url, branch=project.default_branch or "main")
+        default = project.default_branch or "main"
+        return RepoInfo(url=project.repo_url, branch=default,
+                        fallback_branch=default)
 
     async def get_task_repo_info(self, task: TaskInfo) -> RepoInfo:
         """WC-2/D1 — per-task clone ref. The controller clones the
         server-derived `base_ref` (WC-1/C2: the milestone integration
         branch for a workgraph task) and never re-derives the rule.
-        Empty base_ref ⇒ project default (V16 byte-identical)."""
+        Empty base_ref ⇒ project default (V16 byte-identical).
+
+        WC-1.1 (vtaskforge#13): `branch` stays the server-derived
+        base_ref — it is BOTH the clone ref AND the WC-2 integrate
+        target (`_poll_and_integrate` passes it to `integrate()`; for
+        the root node that target MUST be the integration branch so the
+        root's approval *creates* it). `fallback_branch` carries the
+        project default so the clone path — and only the clone path —
+        can fall back at DAG cold start, when the integration branch
+        does not exist on origin yet."""
         project = await self._client.projects.get(task.project_id)
-        branch = task.base_ref or project.default_branch or "main"
-        return RepoInfo(url=project.repo_url, branch=branch)
+        default = project.default_branch or "main"
+        branch = task.base_ref or default
+        return RepoInfo(url=project.repo_url, branch=branch,
+                        fallback_branch=default)
 
     async def list_integrations(self) -> list[TaskInfo]:
         """WC-2/D2 — workgraph tasks awaiting post-approve integration.

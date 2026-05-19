@@ -797,3 +797,94 @@ class TestCloneCommandUsesResolvedUrl:
             await inv._ensure_repo_cloned(repo, wd)
         argv = self._clone_argv(mr)
         assert argv is not None and "https://gitlab.com/o/r.git" in argv
+
+
+class TestColdStartCloneFallback:
+    """WC-1.1 (vtaskforge#13): a DAG root node's server-derived
+    base_ref IS the milestone integration branch — but that git ref
+    does not exist on origin until the first integrate() (post-approval).
+    The clone path (only) must fall back to the project default at cold
+    start; any other clone failure still fails loud. The integrate
+    target (get_task_repo_info.branch) is deliberately NOT changed —
+    see test_wc2_controller_integration."""
+
+    def _clone_branches(self, mock_run):
+        out = []
+        for c in mock_run.call_args_list:
+            argv = c.args[0] if c.args else c.kwargs.get("args", [])
+            if isinstance(argv, list) and argv[:2] == ["git", "clone"] \
+                    and "--branch" in argv:
+                out.append(argv[argv.index("--branch") + 1])
+        return out
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_default_when_base_ref_branch_absent(
+            self, tmp_path, test_config):
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = tmp_path / "missing"
+        repo = RepoInfo(url="https://github.com/o/r.git",
+                        branch="vafi/wg-ms1", fallback_branch="main")
+        wd = tmp_path / "wd"
+        not_found = subprocess.CalledProcessError(
+            128, "git",
+            stderr="fatal: Remote branch vafi/wg-ms1 not found "
+                   "in upstream origin\n")
+
+        def fake_run(cmd, **kw):
+            if isinstance(cmd, list) and cmd[:2] == ["git", "clone"] \
+                    and cmd[cmd.index("--branch") + 1] == "vafi/wg-ms1":
+                raise not_found
+            return Mock(returncode=0, stderr="", stdout="")
+
+        with patch("controller.invoker.subprocess.run",
+                   side_effect=fake_run) as mr:
+            await inv._ensure_repo_cloned(repo, wd)
+        assert self._clone_branches(mr) == ["vafi/wg-ms1", "main"]
+
+    @pytest.mark.asyncio
+    async def test_other_clone_error_still_fails_loud(
+            self, tmp_path, test_config):
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = tmp_path / "missing"
+        repo = RepoInfo(url="https://github.com/o/r.git",
+                        branch="vafi/wg-ms1", fallback_branch="main")
+        wd = tmp_path / "wd"
+        auth_err = subprocess.CalledProcessError(
+            128, "git",
+            stderr="fatal: could not read Username for "
+                   "'https://github.com': terminal prompts disabled\n")
+        with patch("controller.invoker.subprocess.run",
+                   side_effect=auth_err):
+            with pytest.raises(subprocess.CalledProcessError):
+                await inv._ensure_repo_cloned(repo, wd)
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_branch_exists(
+            self, tmp_path, test_config):
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = tmp_path / "missing"
+        repo = RepoInfo(url="https://github.com/o/r.git",
+                        branch="vafi/wg-ms1", fallback_branch="main")
+        wd = tmp_path / "wd"
+        with patch("controller.invoker.subprocess.run") as mr:
+            mr.return_value = Mock(returncode=0, stderr="", stdout="")
+            await inv._ensure_repo_cloned(repo, wd)
+        assert self._clone_branches(mr) == ["vafi/wg-ms1"]
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_fallback_equals_branch(
+            self, tmp_path, test_config):
+        # single-task / V16 path: branch == fallback == project default.
+        # A not-found there is a genuine error, not a cold start.
+        inv = HarnessInvoker(test_config)
+        inv.ssh_key_path = tmp_path / "missing"
+        repo = RepoInfo(url="https://github.com/o/r.git",
+                        branch="main", fallback_branch="main")
+        wd = tmp_path / "wd"
+        nf = subprocess.CalledProcessError(
+            128, "git",
+            stderr="fatal: Remote branch main not found in "
+                   "upstream origin\n")
+        with patch("controller.invoker.subprocess.run", side_effect=nf):
+            with pytest.raises(subprocess.CalledProcessError):
+                await inv._ensure_repo_cloned(repo, wd)
