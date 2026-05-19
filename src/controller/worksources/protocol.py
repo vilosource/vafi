@@ -133,6 +133,30 @@ class WorkSource(Protocol):
         """
         ...
 
+    async def get_task_repo_info(self, task: TaskInfo) -> RepoInfo:
+        """WC-2/D1: per-task clone ref (server-derived base_ref).
+
+        Args:
+            task: The task (carries base_ref from WC-1/C2)
+
+        Returns:
+            Repository URL and the branch to clone (base_ref, or
+            project default when base_ref is empty — V16).
+        """
+        ...
+
+    async def list_integrations(self) -> list[TaskInfo]:
+        """WC-2/D2: workgraph tasks in 'integrating' awaiting the
+        deterministic post-approve merge."""
+        ...
+
+    async def report_integration_result(
+        self, task_id: str, success: bool, detail: str = ""
+    ) -> None:
+        """WC-2/D2: report the integration outcome —
+        success ⇒ done; conflict ⇒ needs_attention + note."""
+        ...
+
     async def get_rework_context(self, task_id: str) -> ReworkContext:
         """Get context for rework execution.
 

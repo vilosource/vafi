@@ -7,13 +7,15 @@ It polls for work, claims tasks, executes them via harness invocation, and repor
 import asyncio
 import logging
 import signal
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import AgentConfig
 from .context import build_context, write_context
 from .emission import build_emitter, make_execution_summary, safe_emit
-from .gates import GateRunner
+from .gates import GateRunner, deliverable_branch
+from .integration import integrate
 from .heartbeat import agent_heartbeat_loop, heartbeat_loop
 from .invoker import HarnessInvoker
 from .types import ExecutionResult
@@ -157,6 +159,9 @@ class Controller:
         if self.config.agent_role == "judge":
             await self._poll_and_review()
         else:
+            # WC-2/D2: drain the milestone merge queue first (frees the
+            # WC-1 integration slot promptly), then poll for new work.
+            await self._poll_and_integrate()
             await self._poll_and_execute()
 
     async def _poll_and_execute(self) -> None:
@@ -253,6 +258,66 @@ class Controller:
                 await self.work_source.fail(task.id, f"error during processing: {str(e)}")
             except Exception:
                 logger.error(f"Failed to fail task {task.id}", exc_info=True)
+
+    async def _poll_and_integrate(self) -> None:
+        """WC-2/D2: service the milestone merge queue.
+
+        WC-1 routes an approved workgraph task to 'integrating' (the
+        slot is held SoR-side, one in-flight per milestone). Here the
+        controller performs the deterministic merge of the task's
+        delivered branch (``vafi/task-<id>`` — the F7/F10 deliverable
+        ref) into the milestone integration branch and reports the
+        outcome. Conflict → fail-loud → needs_attention (WC-1/C3 + the
+        C4 reaper own recovery). Idempotent / re-entrant.
+        """
+        try:
+            integrations = await self.work_source.list_integrations()
+        except Exception as e:
+            logger.error(f"list_integrations failed: {e}", exc_info=True)
+            return
+        if not integrations:
+            return
+
+        task = integrations[0]
+        logger.info(f"Integrating task {task.id}: {task.title}")
+        try:
+            repo = await self.work_source.get_task_repo_info(task)
+            proj = await self.work_source.get_repo_info(task.project_id)
+            task_branch = deliverable_branch(task.id)
+            with tempfile.TemporaryDirectory() as tmp:
+                workdir = Path(tmp) / "repo"
+                outcome = await asyncio.to_thread(
+                    integrate,
+                    repo.url,
+                    repo.branch,            # integration branch (= base_ref)
+                    proj.branch,            # project default (branch creation)
+                    task_branch,
+                    workdir,
+                )
+            await self.work_source.report_integration_result(
+                task.id, outcome.success, outcome.detail
+            )
+            safe_emit(
+                self._emitter, "task_state_changed",
+                workgraph_id=task.workgraph_id, task_id=task.id,
+                source=f"vafi-controller/{self._agent_info.id}",
+                from_status="integrating",
+                to_status="done" if outcome.success else "needs_attention",
+            )
+            logger.info(
+                f"Integration {'OK' if outcome.success else 'FAILED'} for "
+                f"task {task.id}: {outcome.detail}"
+            )
+        except Exception as e:
+            logger.error(f"Integration error for task {task.id}: {e}",
+                         exc_info=True)
+            try:
+                await self.work_source.report_integration_result(
+                    task.id, False, f"controller integration error: {e}"
+                )
+            except Exception:
+                logger.error("Failed to report integration error",
+                             exc_info=True)
 
     async def _poll_and_review(self) -> None:
         """Judge: poll for tasks pending review, verify, and submit verdict.
@@ -378,8 +443,10 @@ class Controller:
         try:
             logger.info(f"Creating workdir for task {task.id}: {workdir}")
 
-            # Get repo info from work source
-            repo_info = await self.work_source.get_repo_info(task.project_id)
+            # WC-2/D1: per-task clone ref — the server-derived base_ref
+            # (the milestone integration branch for a workgraph task;
+            # project default otherwise — V16 byte-identical).
+            repo_info = await self.work_source.get_task_repo_info(task)
 
             # Clone repo first (must happen before writing context file)
             await self._invoker._ensure_repo_cloned(repo_info, workdir)

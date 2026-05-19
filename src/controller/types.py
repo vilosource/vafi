@@ -40,6 +40,11 @@ class TaskInfo:
     # maps task.milestone.id here. Empty ⇒ emission hooks skip +
     # log once (degrade, never crash).
     workgraph_id: str = ""
+    # WC-1/C2 server-derived base_ref (milestone integration branch, or
+    # project default for single-task work). Defaulted so existing
+    # TaskInfo(...) constructions don't regress (V16). Empty ⇒ fall back
+    # to the project default branch (today's clone behaviour).
+    base_ref: str = ""
 
 
 @dataclass
