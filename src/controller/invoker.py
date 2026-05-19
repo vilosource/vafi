@@ -200,37 +200,67 @@ class HarnessInvoker:
         workdir.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Use git clone with specific branch
-            cmd = [
-                "git", "clone",
-                "--branch", repo.branch,
-                "--single-branch",
-                "--depth", "1",  # Shallow clone for efficiency
-                self._clone_url(repo.url),  # #17/R1: SSH cred for private repos
-                str(workdir)
-            ]
-
-            # Run git clone synchronously (quick operation)
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,  # 1 minute timeout for clone
-                check=True
-            )
-
-            logger.debug(f"Repository cloned successfully: {result.returncode}")
-
-            # #15: HTTPS clone leaves origin unpushable with the mounted
-            # SSH-only credential — rewrite it deterministically.
-            self._normalize_origin_for_push(workdir, repo.url)
+            self._clone_at(repo, repo.branch, workdir)
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Git clone failed: {e.stderr}")
-            raise
+            # WC-1.1 (vtaskforge#13): a DAG root node's server-derived
+            # base_ref IS the milestone integration branch, but that ref
+            # is not created on origin until the root's own approval →
+            # integrate(). At this cold start the clone of the
+            # integration branch fails with "Remote branch … not found";
+            # the correct base for a dependency-less node is the project
+            # default. Fall back to it — and ONLY for that specific
+            # missing-branch failure, ONLY when a distinct fallback
+            # exists. Every other clone failure still fails loud (R3).
+            if (
+                repo.fallback_branch
+                and repo.fallback_branch != repo.branch
+                and self._is_missing_remote_branch(e)
+            ):
+                logger.warning(
+                    f"Branch {repo.branch} absent on origin (DAG cold "
+                    f"start) — cloning project default "
+                    f"{repo.fallback_branch} instead"
+                )
+                self._clone_at(repo, repo.fallback_branch, workdir)
+            else:
+                logger.error(f"Git clone failed: {e.stderr}")
+                raise
         except subprocess.TimeoutExpired:
             logger.error("Git clone timed out after 60 seconds")
             raise
+
+    @staticmethod
+    def _is_missing_remote_branch(e: subprocess.CalledProcessError) -> bool:
+        """True iff a `git clone --branch` failed specifically because
+        the requested remote branch does not exist (git:
+        ``fatal: Remote branch <name> not found in upstream origin``).
+        Narrow on purpose — auth/network/URL failures must NOT match."""
+        err = (e.stderr or "").lower()
+        return "remote branch" in err and "not found" in err
+
+    def _clone_at(self, repo: RepoInfo, branch: str, workdir: Path) -> None:
+        """Shallow single-branch clone of ``branch`` into ``workdir``,
+        then normalise origin for push (#15)."""
+        cmd = [
+            "git", "clone",
+            "--branch", branch,
+            "--single-branch",
+            "--depth", "1",  # Shallow clone for efficiency
+            self._clone_url(repo.url),  # #17/R1: SSH cred for private repos
+            str(workdir),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,  # 1 minute timeout for clone
+            check=True,
+        )
+        logger.debug(f"Repository cloned successfully: {result.returncode}")
+        # #15: HTTPS clone leaves origin unpushable with the mounted
+        # SSH-only credential — rewrite it deterministically.
+        self._normalize_origin_for_push(workdir, repo.url)
 
     def _build_claude_command(self, prompt: str, task_id: str) -> list[str]:
         """Build Claude Code CLI command."""

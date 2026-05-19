@@ -20,7 +20,14 @@ class AgentInfo:
 class RepoInfo:
     """Repository information for task execution."""
     url: str          # git clone URL
-    branch: str       # default branch
+    branch: str       # ref to clone / the WC-2 integrate target
+    # WC-1.1 (vtaskforge#13): the project default branch. The clone
+    # path falls back to this when `branch` (a milestone integration
+    # branch) does not yet exist on origin — the DAG cold start, where
+    # the root node's integration branch has not been created by its
+    # own integrate() yet. Defaulted so existing RepoInfo(url=, branch=)
+    # constructions don't regress; "" ⇒ no fallback (V16 single-task).
+    fallback_branch: str = ""
 
 
 @dataclass

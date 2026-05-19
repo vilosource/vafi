@@ -115,7 +115,29 @@ class TestGetTaskRepoInfo:
                         test_command={}, needs_review=False,
                         assigned_to=None, base_ref="vafi/wg-ms1")
         repo = await ws.get_task_repo_info(task)
-        assert repo == RepoInfo(url="u", branch="vafi/wg-ms1")
+        # WC-1.1: branch is the integrate target (unchanged — the root's
+        # approval is what *creates* vafi/wg-ms1); fallback_branch is the
+        # project default the *clone* path uses at cold start.
+        assert repo == RepoInfo(url="u", branch="vafi/wg-ms1",
+                                fallback_branch="main")
+
+    @pytest.mark.asyncio
+    async def test_integrate_target_is_base_ref_not_fallback(self):
+        """The WC-1.1 clone-path fallback must NOT change the integrate
+        target: _poll_and_integrate passes get_task_repo_info().branch
+        to integrate() and it must stay the integration branch so the
+        root's deliverable lands in (and first creates) vafi/wg-ms1."""
+        from controller.worksources.vtf import VtfWorkSource
+        ws = VtfWorkSource(client=AsyncMock())
+        ws._client.projects.get = AsyncMock(
+            return_value=type("P", (), {"repo_url": "u", "default_branch": "main"})()
+        )
+        task = TaskInfo(id="t", title="t", spec="", project_id="p",
+                        test_command={}, needs_review=False,
+                        assigned_to=None, base_ref="vafi/wg-ms1")
+        repo = await ws.get_task_repo_info(task)
+        assert repo.branch == "vafi/wg-ms1"          # integrate target
+        assert repo.fallback_branch == "main"        # clone cold-start only
 
     @pytest.mark.asyncio
     async def test_empty_base_ref_falls_back_to_project_default(self):
