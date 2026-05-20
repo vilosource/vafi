@@ -363,14 +363,26 @@ class Controller:
             logger.info(f"Submitted review for task {task.id}: {verdict['decision']}")
 
         except Exception as e:
+            # R3b: fail loud (I2). Any unrecoverable error in the review path
+            # — judge-harness failure OR a verdict-write that could not be
+            # recorded (#18) — leaves the task stranded in
+            # pending_completion_review. Do not swallow it: drive it to
+            # needs_attention so a human (the escalation terminal) sees it,
+            # mirroring _process_task. fail() both notes and transitions
+            # (pending_completion_review -> needs_attention is legal). If
+            # fail() also fails (vtf unreachable), R3's expire_stale_reviews
+            # reaper is the server-side backstop — log loudly, never raise.
             logger.error(f"Error reviewing task {task.id}: {e}", exc_info=True)
-            # Try to add a note about the failure
             try:
-                await self.work_source.add_note(
-                    task.id, f"Judge error: {str(e)}", "controller"
+                await self.work_source.fail(
+                    task.id, f"judge review failed (verdict not recorded): {e}"
                 )
             except Exception:
-                logger.error(f"Failed to post judge error note for task {task.id}", exc_info=True)
+                logger.critical(
+                    f"Could not escalate stranded review for task {task.id} to "
+                    f"needs_attention; relying on server-side review reaper",
+                    exc_info=True,
+                )
 
     def _parse_verdict(self, completion_report: str) -> dict:
         """Parse judge verdict from harness output.
